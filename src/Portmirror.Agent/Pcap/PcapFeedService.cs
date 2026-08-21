@@ -120,55 +120,92 @@ public sealed class PcapFeedService
         var processor = new PcapProcessor(_redactor, _options.PacketServerPorts);
         var workDir = Path.Combine(Path.GetTempPath(), "portmirror-pcap");
         Directory.CreateDirectory(workDir);
-        var etl = Path.Combine(workDir, "capture.etl");
-        var pcap = Path.Combine(workDir, "capture.pcapng");
 
-        while (!ct.IsCancellationRequested)
+        // Two capture files used in turn. Each interval the running one is stopped and the other
+        // is started immediately, so the capture gap is a single stop->start (well under a second)
+        // rather than the whole convert-and-process time; the just-closed file is processed only
+        // after the new capture is already running.
+        var etlA = Path.Combine(workDir, "capture-a.etl");
+        var etlB = Path.Combine(workDir, "capture-b.etl");
+        var pcap = Path.Combine(workDir, "snapshot.pcapng");
+
+        // The filter is set once for the whole session, not per cycle, so it never widens the gap.
+        SafeRun("filter remove", "filter remove");
+        SafeRun("filter add", FilterArgs());
+
+        TryDelete(etlA);
+        var current = etlA;
+        StartCapture(current);
+
+        try
         {
+            while (!ct.IsCancellationRequested)
+            {
+                await DelayQuietly(TimeSpan.FromSeconds(Math.Max(1, _options.PacketIntervalSeconds)), ct);
+                if (ct.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                var closed = current;
+
+                try
+                {
+                    RunPktmon("stop");                          // flush 'closed'  — gap opens
+                    current = ReferenceEquals(closed, etlA) ? etlB : etlA;
+                    TryDelete(current);
+                    StartCapture(current);                      // resume at once  — gap closes
+                    Interlocked.Increment(ref _filesProcessed);
+
+                    // Processing happens only after capture has resumed, so it does not extend
+                    // the gap.
+                    await ProcessFileAsync(processor, closed, pcap, ct);
+                    TryDelete(closed);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    _lastError = ex.Message;
+                    _logger.LogWarning(ex, "Packet capture cycle failed; continuing.");
+                }
+            }
+        }
+        finally
+        {
+            SafeRun("stop", "stop");
+            SafeRun("filter remove", "filter remove");
+
+            // Process whatever the final capture window holds, then surface any partial exchanges.
             try
             {
-                await CaptureOnceAsync(processor, etl, pcap, ct);
-            }
-            catch (OperationCanceledException)
-            {
-                break;
+                await ProcessFileAsync(processor, current, pcap, CancellationToken.None);
             }
             catch (Exception ex)
             {
-                _lastError = ex.Message;
-                _logger.LogWarning(ex, "Packet capture cycle failed; retrying.");
-                await DelayQuietly(TimeSpan.FromSeconds(5), ct);
+                _logger.LogDebug(ex, "Final capture process failed (ignored).");
             }
-        }
 
-        AppendAll(processor.Flush());
-        TryDelete(etl);
-        TryDelete(pcap);
+            AppendAll(processor.Flush());
+            TryDelete(etlA);
+            TryDelete(etlB);
+            TryDelete(pcap);
+        }
     }
 
-    private async Task CaptureOnceAsync(PcapProcessor processor, string etl, string pcap, CancellationToken ct)
+    private void StartCapture(string etl) => RunPktmon(
+        $"start -c --pkt-size 0 --comp all --file-name \"{etl}\" --file-size {_options.PacketFileSizeMb}");
+
+    private async Task ProcessFileAsync(PcapProcessor processor, string etl, string pcap, CancellationToken ct)
     {
-        TryDelete(etl);
-        TryDelete(pcap);
-
-        // A short filtered capture: full packets, all components (so nothing is missed), bounded
-        // file size. A per-port filter is applied when the operator has named the server ports,
-        // which also keeps the agent's own outbound chatter out of the capture.
-        var startArgs = $"start -c --pkt-size 0 --comp all --file-name \"{etl}\" --file-size {_options.PacketFileSizeMb}";
-        ApplyPortFilters();
-        SafeRun("filter add", FilterArgs());
-        RunPktmon(startArgs);
-
-        await DelayQuietly(TimeSpan.FromSeconds(Math.Max(1, _options.PacketIntervalSeconds)), ct);
-
-        RunPktmon("stop");
-        SafeRun("filter remove", "filter remove");
-
         if (!File.Exists(etl))
         {
             return;
         }
 
+        TryDelete(pcap);
         RunPktmon($"etl2pcap \"{etl}\" -o \"{pcap}\"");
         if (!File.Exists(pcap))
         {
@@ -178,7 +215,6 @@ public sealed class PcapFeedService
         var bytes = await File.ReadAllBytesAsync(pcap, ct);
         Interlocked.Exchange(ref _packetsSeen, processor.PacketsSeen);
         AppendAll(processor.Process(bytes));
-        Interlocked.Increment(ref _filesProcessed);
     }
 
     private void AppendAll(IReadOnlyList<Exchange> exchanges)
@@ -195,12 +231,6 @@ public sealed class PcapFeedService
             _ring.Append(exchange);
             Interlocked.Increment(ref _exchangesEmitted);
         }
-    }
-
-    private void ApplyPortFilters()
-    {
-        // Clear any filter a previous crashed cycle may have left behind.
-        SafeRun("filter remove", "filter remove");
     }
 
     private string FilterArgs()
@@ -244,9 +274,14 @@ public sealed class PcapFeedService
         };
 
         process.Start();
-        process.StandardOutput.ReadToEnd();
-        var stderr = process.StandardError.ReadToEnd();
+
+        // Drain both pipes concurrently before waiting, so a child that fills its stderr buffer
+        // while we block on stdout cannot deadlock.
+        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+        var stderrTask = process.StandardError.ReadToEndAsync();
         process.WaitForExit(30_000);
+        var stderr = stderrTask.GetAwaiter().GetResult();
+        _ = stdoutTask.GetAwaiter().GetResult();
 
         if (process.ExitCode != 0 && throwOnError)
         {
