@@ -31,10 +31,26 @@ builder.Services.AddSingleton(new Redactor(options.RedactionEnabled));
 builder.Services.AddSingleton<EtwCaptureService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<EtwCaptureService>());
 
+// The packet (body) feed is Windows-only and off unless enabled; register it only there.
+if (OperatingSystem.IsWindows())
+{
+    builder.Services.AddSingleton<Portmirror.Agent.Pcap.PcapFeedService>();
+}
+
 var app = builder.Build();
 
 app.UsePortmirrorAuth();
 app.MapPortmirror();
+
+if (OperatingSystem.IsWindows() && options.PacketCaptureEnabled)
+{
+    var feed = app.Services.GetRequiredService<Portmirror.Agent.Pcap.PcapFeedService>();
+    var problem = feed.TryStart();
+    if (problem is not null)
+    {
+        app.Logger.LogWarning("Packet feed not started: {Reason}", problem);
+    }
+}
 
 app.Logger.LogInformation(
     "portmirror listening on http://0.0.0.0:{Port} (retaining {Capacity} exchanges, redaction {Redaction})",

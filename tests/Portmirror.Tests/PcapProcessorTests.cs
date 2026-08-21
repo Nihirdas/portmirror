@@ -1,0 +1,81 @@
+using System.Text;
+using Portmirror.Agent.Pcap;
+using Portmirror.Agent.Redaction;
+using Xunit;
+
+namespace Portmirror.Tests;
+
+public class PcapProcessorTests
+{
+    private static byte[] Frame(string sip, int sp, string dip, int dp, uint seq, string payload) =>
+        PacketBuilders.Ethernet(0x0800,
+            PacketBuilders.Ipv4Tcp(sip, sp, dip, dp, seq, Encoding.ASCII.GetBytes(payload)));
+
+    [Fact]
+    public void Processes_a_pcapng_file_into_a_paired_exchange()
+    {
+        var file = PacketBuilders.Pcapng(PacketParser.LinkTypeEthernet, new[]
+        {
+            Frame("10.0.0.1", 5000, "10.0.0.2", 80, 1, "GET /p HTTP/1.1\r\nHost: h\r\n\r\n"),
+            Frame("10.0.0.2", 80, "10.0.0.1", 5000, 1, "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc")
+        });
+
+        var processor = new PcapProcessor(new Redactor(true), new[] { 80 });
+        var got = processor.Process(file);
+
+        var ex = Assert.Single(got);
+        Assert.Equal("GET", ex.Verb);
+        Assert.Equal("/p", ex.Url);
+        Assert.Equal(200, ex.StatusCode);
+        Assert.Equal("abc", ex.Response!.Body);
+        Assert.True(processor.PacketsSeen >= 2);
+        Assert.True(processor.SegmentsSeen >= 2);
+    }
+
+    [Fact]
+    public void Keeps_one_flow_across_two_files_so_a_split_connection_reassembles()
+    {
+        var processor = new PcapProcessor(new Redactor(true), new[] { 80 });
+
+        // Request in the first file, its response in the second — a connection spanning intervals.
+        var file1 = PacketBuilders.Pcapng(PacketParser.LinkTypeEthernet, new[]
+        {
+            Frame("10.0.0.1", 5000, "10.0.0.2", 80, 1, "GET /split HTTP/1.1\r\nHost: h\r\n\r\n")
+        });
+        var file2 = PacketBuilders.Pcapng(PacketParser.LinkTypeEthernet, new[]
+        {
+            Frame("10.0.0.2", 80, "10.0.0.1", 5000, 1, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")
+        });
+
+        Assert.Empty(processor.Process(file1));   // request seen, no response yet
+        var got = processor.Process(file2);
+
+        var ex = Assert.Single(got);
+        Assert.Equal("/split", ex.Url);
+        Assert.Equal("ok", ex.Response!.Body);
+    }
+
+    [Fact]
+    public void An_empty_file_yields_nothing_and_does_not_throw()
+    {
+        var processor = new PcapProcessor(new Redactor(true));
+        Assert.Empty(processor.Process(Array.Empty<byte>()));
+    }
+
+    [Fact]
+    public void Flush_surfaces_a_request_with_no_response_as_partial()
+    {
+        var processor = new PcapProcessor(new Redactor(true), new[] { 80 });
+        var file = PacketBuilders.Pcapng(PacketParser.LinkTypeEthernet, new[]
+        {
+            Frame("10.0.0.1", 5000, "10.0.0.2", 80, 1, "GET /lonely HTTP/1.1\r\nHost: h\r\n\r\n")
+        });
+
+        Assert.Empty(processor.Process(file));
+
+        var flushed = processor.Flush();
+        var ex = Assert.Single(flushed);
+        Assert.Equal("/lonely", ex.Url);
+        Assert.True(ex.Partial);
+    }
+}

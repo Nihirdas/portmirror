@@ -56,19 +56,29 @@ public static class ApiEndpoints
         app.MapGet("/api/agent", (
             ExchangeRing ring,
             EtwCaptureService capture,
+            IServiceProvider services,
             IOptions<AgentOptions> options) =>
         {
             var o = options.Value;
+            var feed = services.GetService<Pcap.PcapFeedService>();
 
             return Results.Json(new
             {
+                packetFeed = feed is null ? null : new
+                {
+                    running = feed.IsRunning,
+                    filesProcessed = feed.FilesProcessed,
+                    packetsSeen = feed.PacketsSeen,
+                    exchangesEmitted = feed.ExchangesEmitted,
+                    lastError = feed.LastError
+                },
                 product = "portmirror",
                 version = Version(),
                 host = Environment.MachineName,
                 capturing = capture.IsCapturing,
                 elevated = EtwCaptureService.IsElevated(),
                 tier = nameof(CaptureTier.EtwMetadata),
-                bodiesAvailable = false,
+                bodiesAvailable = services.GetService<Pcap.PcapFeedService>()?.IsRunning ?? false,
                 eventsSeen = capture.EventsSeen,
                 exchangesEmitted = capture.ExchangesEmitted,
                 signalsUncorrelated = capture.SignalsUncorrelated,
@@ -140,6 +150,29 @@ public static class ApiEndpoints
         {
             capture.StopCapture();
             return Results.Json(new { capturing = false }, Json);
+        });
+
+        // The packet (body) feed: captures request/response payloads via pktmon, no recycle.
+        app.MapPost("/api/capture/packets/start", (IServiceProvider services) =>
+        {
+            var feed = services.GetService<Pcap.PcapFeedService>();
+            if (feed is null)
+            {
+                return Results.Json(new { running = false, error = "Packet capture is available on Windows only." },
+                    Json, statusCode: StatusCodes.Status501NotImplemented);
+            }
+
+            var problem = feed.TryStart();
+            return problem is null
+                ? Results.Json(new { running = true }, Json)
+                : Results.Json(new { running = feed.IsRunning, error = problem }, Json,
+                    statusCode: StatusCodes.Status503ServiceUnavailable);
+        });
+
+        app.MapPost("/api/capture/packets/stop", (IServiceProvider services) =>
+        {
+            services.GetService<Pcap.PcapFeedService>()?.Stop();
+            return Results.Json(new { running = false }, Json);
         });
 
         // Reports the payload fields HTTP.SYS actually emits on this Windows build, so
