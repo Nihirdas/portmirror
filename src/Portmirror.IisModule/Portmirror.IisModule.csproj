@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net48</TargetFramework>
+    <RootNamespace>Portmirror.IisModule</RootNamespace>
+    <AssemblyName>Portmirror.IisModule</AssemblyName>
+    <!-- Loaded into IIS worker processes; never packed or run standalone. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Web" />
+    <Reference Include="System.Xml" />
+    <Reference Include="System.IO.Compression" />
+    <PackageReference Include="System.Text.Json" Version="8.0.5" />
+  </ItemGroup>
+
+  <!--
+    Security-critical and format logic is compiled from the agent's source, not copied, so the
+    two assemblies can never drift. The module needs no TCP reassembly (it reads bodies directly
+    from IIS), so only these pure files are shared.
+  -->
+  <ItemGroup>
+    <Compile Include="..\Portmirror.Agent\Capture\Exchange.cs" Link="Shared\Exchange.cs" />
+    <Compile Include="..\Portmirror.Agent\Redaction\Redactor.cs" Link="Shared\Redactor.cs" />
+    <Compile Include="..\Portmirror.Agent\Http\BodyFormatter.cs" Link="Shared\BodyFormatter.cs" />
+    <Compile Include="..\Portmirror.Agent\Http\BodyDecoder.cs" Link="Shared\BodyDecoder.cs" />
+    <Compile Include="..\Portmirror.Agent\Http\ParsedMessage.cs" Link="Shared\ParsedMessage.cs" />
+    <Compile Include="..\Portmirror.Agent\Http\MessageMapper.cs" Link="Shared\MessageMapper.cs" />
+    <Compile Include="..\Portmirror.Agent\Faults\FaultRule.cs" Link="Shared\FaultRule.cs" />
+    <Compile Include="..\Portmirror.Agent\Faults\FaultMatcher.cs" Link="Shared\FaultMatcher.cs" />
+  </ItemGroup>
+
+</Project>
