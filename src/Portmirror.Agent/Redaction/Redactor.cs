@@ -74,9 +74,11 @@ public sealed class Redactor
     {
         var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (var (name, value) in headers)
+        foreach (var header in headers)
         {
-            result[name] = Enabled && SensitiveHeaders.Contains(name) ? Mask : value;
+            // KeyValuePair deconstruction is unavailable on net48, where this file is also
+            // compiled into the IIS module; use the members directly.
+            result[header.Key] = Enabled && SensitiveHeaders.Contains(header.Key) ? Mask : header.Value;
         }
 
         return result;
