@@ -120,18 +120,35 @@
   .console-bar .live i{width:6px;height:6px;border-radius:50%;background:var(--ok);animation:pulse 1.8s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.28}}
   .console-bar .spacer{margin-left:auto}
-  .tail{width:100%; border-collapse:collapse; font-family:var(--mono); font-size:.8rem; font-variant-numeric:tabular-nums}
-  .tail th{
-    text-align:left; padding:9px 16px; color:var(--ink-faint); font-weight:500;
-    border-bottom:1px solid var(--line); font-size:.7rem; letter-spacing:.1em; text-transform:uppercase; white-space:nowrap
+  .tail{--rowh:34px; --rows:8; font-family:var(--mono); font-size:.8rem; font-variant-numeric:tabular-nums}
+  .trow{
+    display:grid; grid-template-columns:78px 54px 46px 62px minmax(0,1fr) 96px;
+    align-items:center; height:var(--rowh); padding:0 16px; overflow:hidden;
+    border-bottom:1px solid rgba(29,42,56,.55); color:var(--ink-dim); white-space:nowrap;
   }
-  .tail td{padding:9px 16px; border-bottom:1px solid rgba(29,42,56,.6); white-space:nowrap; color:var(--ink-dim)}
-  .tail tr:last-child td{border-bottom:0}
-  .tail .u{color:var(--ink); overflow:hidden; text-overflow:ellipsis; max-width:1px; width:100%}
-  .tail .v{color:var(--signal); font-weight:500}
+  .thead{
+    color:var(--ink-faint); font-size:.7rem; letter-spacing:.1em; text-transform:uppercase;
+    border-bottom:1px solid var(--line); height:32px
+  }
+  /* Fixed viewport so arrivals never shift the page, and departures leave unseen. */
+  .rows{height:calc(var(--rowh) * var(--rows)); overflow:hidden; position:relative}
+  .trow .u{color:var(--ink); overflow:hidden; text-overflow:ellipsis}
+  .trow .v{color:var(--signal); font-weight:500}
+  .trow .ms{color:var(--ink-faint)}
+  .trow.slow .ms{color:var(--warn)}
   .s2{color:var(--ok)} .s3{color:var(--signal)} .s4{color:var(--warn)} .s5{color:var(--bad)}
-  .tail tr.in{animation:slide .45s cubic-bezier(.2,.8,.3,1) both}
-  @keyframes slide{from{opacity:0; transform:translateY(-7px); background:rgba(53,214,231,.07)} to{opacity:1; transform:none}}
+  /* Height 0 -> full is what makes the rows below visibly get pushed down. */
+  .trow.enter{animation:arrive .34s cubic-bezier(.22,.9,.28,1) both}
+  @keyframes arrive{
+    0%  {height:0; opacity:0; background:rgba(53,214,231,.16)}
+    55% {opacity:1}
+    100%{height:var(--rowh); opacity:1; background:transparent}
+  }
+  @media (max-width:640px){
+    .tail{--rows:7}
+    .trow{grid-template-columns:70px 48px 42px minmax(0,1fr); padding:0 12px}
+    .trow .cl,.thead .cl,.trow .ms,.thead .ms{display:none}
+  }
   .mirror-plane{position:relative; height:0}
   .mirror-line{
     height:1px; background:linear-gradient(90deg,transparent,var(--signal),transparent); opacity:.6
@@ -334,12 +351,12 @@
         <span>kernel http stack</span>
         <span class="spacer">bounded ring · 5 000 exchanges</span>
       </div>
-      <table class="tail">
-        <thead>
-          <tr><th>time</th><th>verb</th><th>status</th><th>ms</th><th>path</th><th>client</th></tr>
-        </thead>
-        <tbody id="tail"></tbody>
-      </table>
+      <div class="tail">
+        <div class="trow thead" aria-hidden="true">
+          <span>time</span><span>verb</span><span>code</span><span class="ms">ms</span><span>path</span><span class="cl">client</span>
+        </div>
+        <div class="rows" id="rows" role="log" aria-label="Captured requests" aria-live="off"></div>
+      </div>
     </div>
     <div class="mirror-plane"><div class="mirror-line"></div></div>
     <div class="reflection"><div class="reflection-rows" id="refl" aria-hidden="true"></div></div>
@@ -730,68 +747,89 @@ dotnet publish src/Portmirror.Agent/Portmirror.Agent.csproj -c Release -r win-x6
 
 <script>
   (function () {
-    var rows = [
-      ['GET',  200, 4.65, '/api/orders?page=2',        '10.0.0.24'],
-      ['POST', 201, 12.4, '/api/orders',                '10.0.0.24'],
-      ['GET',  200, 3.11, '/api/inventory',             '10.0.0.31'],
-      ['POST', 500, 88.2, '/api/payments/authorise',    '10.0.0.9' ],
-      ['GET',  304, 1.02, '/assets/app.css',            '10.0.0.24'],
-      ['PUT',  204, 6.90, '/api/orders/8841',           '10.0.0.31'],
-      ['GET',  404, 2.44, '/api/orders/does-not-exist', '10.0.0.9' ],
-      ['POST', 401, 5.17, '/api/session',               '10.0.0.55'],
-      ['GET',  200, 7.83, '/api/customers/1204',        '10.0.0.31'],
-      ['GET',  503, 30.0, '/api/reports/nightly',       '10.0.0.9' ]
+    // A pool of plausible traffic. Weighted so most calls are fine and a few are not,
+    // which is what makes the colour in the status column mean anything.
+    var POOL = [
+      ['GET',  200, [2,9],    '/api/orders?page=2'],
+      ['GET',  200, [2,7],    '/api/orders?page=3'],
+      ['POST', 201, [9,26],   '/api/orders'],
+      ['GET',  200, [2,6],    '/api/inventory'],
+      ['GET',  200, [3,11],   '/api/customers/1204'],
+      ['GET',  304, [0.4,1.6],'/assets/app.css'],
+      ['GET',  304, [0.4,1.6],'/assets/vendor.js'],
+      ['PUT',  204, [5,14],   '/api/orders/8841'],
+      ['GET',  200, [4,13],   '/api/shipments?since=2026-08-01'],
+      ['POST', 200, [18,60],  '/api/payments/authorise'],
+      ['GET',  404, [1,4],    '/api/orders/does-not-exist'],
+      ['POST', 401, [3,8],    '/api/session'],
+      ['GET',  403, [1,5],    '/api/admin/users'],
+      ['POST', 500, [60,240], '/api/payments/authorise'],
+      ['GET',  503, [900,3000],'/api/reports/nightly'],
+      ['GET',  200, [1,4],    '/healthz']
     ];
+    var CLIENTS = ['10.0.0.24','10.0.0.31','10.0.0.9','10.0.0.55','10.0.0.7'];
+    var MAX = 9;
 
-    var tbody = document.getElementById('tail');
-    var refl  = document.getElementById('refl');
-    var MAX = 7, i = 0;
+    var rows = document.getElementById('rows');
+    var refl = document.getElementById('refl');
     var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    var pick = function (a) { return a[Math.floor(Math.random() * a.length)]; };
 
-    function clock(offset) {
-      var t = new Date(Date.now() - offset * 1000);
-      return String(t.getUTCHours()).padStart(2, '0') + ':' +
-             String(t.getUTCMinutes()).padStart(2, '0') + ':' +
-             String(t.getUTCSeconds()).padStart(2, '0');
+    function stamp(d) {
+      function p(n, w) { return String(n).padStart(w || 2, '0'); }
+      return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + p(d.getMilliseconds(), 3).slice(0, 2);
     }
 
-    function build(row, offset, animate) {
-      var tr = document.createElement('tr');
-      if (animate) { tr.className = 'in'; }
-      tr.innerHTML =
-        '<td>' + clock(offset) + '</td>' +
-        '<td class="v">' + row[0] + '</td>' +
-        '<td class="s' + String(row[1])[0] + '">' + row[1] + '</td>' +
-        '<td>' + row[2].toFixed(2) + '</td>' +
-        '<td class="u">' + row[3] + '</td>' +
-        '<td>' + row[4] + '</td>';
-      return tr;
+    function make(entry, when, animate) {
+      var ms = entry[2][0] + Math.random() * (entry[2][1] - entry[2][0]);
+      var el = document.createElement('div');
+      el.className = 'trow' + (animate ? ' enter' : '') + (ms > 100 ? ' slow' : '');
+      el.innerHTML =
+        '<span>' + stamp(when) + '</span>' +
+        '<span class="v">' + entry[0] + '</span>' +
+        '<span class="s' + String(entry[1])[0] + '">' + entry[1] + '</span>' +
+        '<span class="ms">' + (ms < 10 ? ms.toFixed(2) : Math.round(ms)) + '</span>' +
+        '<span class="u">' + entry[3] + '</span>' +
+        '<span class="cl">' + pick(CLIENTS) + '</span>';
+      return el;
     }
 
-    function mirror() {
-      var lines = [];
-      for (var n = 0; n < 4 && n < tbody.children.length; n++) {
-        var c = tbody.children[n].children;
-        lines.push(c[1].textContent + '  ' + c[2].textContent + '  ' + c[4].textContent);
+    function mirrorTop() {
+      var out = [];
+      for (var i = 0; i < 4 && i < rows.children.length; i++) {
+        var c = rows.children[i].children;
+        out.push(c[1].textContent + '  ' + c[2].textContent + '  ' + c[4].textContent);
       }
-      refl.textContent = lines.join('\n');
+      refl.textContent = out.join('\n');
     }
 
-    // Seed the console so it never renders empty.
-    for (var s = MAX - 1; s >= 0; s--) {
-      tbody.appendChild(build(rows[s % rows.length], s * 3, false));
+    function push() {
+      rows.insertBefore(make(pick(POOL), new Date(), true), rows.firstChild);
+      while (rows.children.length > MAX) { rows.removeChild(rows.lastChild); }
+      mirrorTop();
     }
-    i = MAX;
-    mirror();
 
-    if (!reduce) {
-      setInterval(function () {
-        tbody.insertBefore(build(rows[i % rows.length], 0, true), tbody.firstChild);
-        i++;
-        while (tbody.children.length > MAX) { tbody.removeChild(tbody.lastChild); }
-        mirror();
-      }, 2300);
+    // Seed a full screen so the console is never empty, back-dated so the clock reads true.
+    (function seed() {
+      var t = Date.now();
+      for (var i = 0; i < MAX; i++) {
+        t -= 300 + Math.random() * 900;
+        rows.appendChild(make(pick(POOL), new Date(t), false));
+      }
+      mirrorTop();
+    })();
+
+    // Real traffic is bursty, not metronomic: mostly quick arrivals, the odd
+    // back-to-back pair, and an occasional lull.
+    function schedule() {
+      var wait;
+      var r = Math.random();
+      if (r < 0.20)      { wait = 90  + Math.random() * 80;   }   // burst
+      else if (r < 0.85) { wait = 300 + Math.random() * 450;  }   // normal
+      else               { wait = 1100 + Math.random() * 900; }   // lull
+      setTimeout(function () { push(); schedule(); }, wait);
     }
+    if (!reduce) { schedule(); }
 
     // One-time reveal for section content.
     var targets = document.querySelectorAll('section .rail');
