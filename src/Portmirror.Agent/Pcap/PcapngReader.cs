@@ -35,7 +35,10 @@ public static class PcapngReader
 
         while (pos + 12 <= file.Length)
         {
-            var blockType = BinaryPrimitives.ReadUInt32LittleEndian(file.AsSpan(pos));
+            // The Section Header Block's type is byte-order independent, so reading it with the
+            // default endianness always identifies it; every later block type must be read with
+            // the endianness that header established.
+            var blockType = ReadU32(file, pos, littleEndian);
 
             if (blockType == BlockSectionHeader)
             {
