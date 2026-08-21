@@ -657,12 +657,13 @@
         <div class="num">02</div>
         <div>
           <div class="phase-head"><h3>Payloads</h3><span class="chip now">in progress</span></div>
-          <p>The most requested thing the agent cannot do yet: show what was actually in the message.</p>
+          <p>Show what was actually in the message — request and response bodies, two ways.</p>
           <ul>
-            <li>Request and response bodies, pretty-printed as JSON and XML</li>
-            <li>Stream reassembly for the zero-install capture path</li>
-            <li>A server-level module for the traffic that path cannot reach</li>
-            <li>Size caps and streaming so a large upload cannot exhaust memory</li>
+            <li>Request and response bodies, pretty-printed as JSON and XML — done</li>
+            <li>Stream reassembly for the zero-install packet path — done</li>
+            <li>An in-process server module for same-host traffic and full fidelity — done</li>
+            <li>Response fault injection for testing error paths — done</li>
+            <li>Size caps so a large upload cannot exhaust memory — done</li>
           </ul>
         </div>
       </div>
