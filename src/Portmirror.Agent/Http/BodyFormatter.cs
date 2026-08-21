@@ -114,12 +114,21 @@ public static class BodyFormatter
             OmitXmlDeclaration = false
         };
 
-        var document = new XmlDocument
+        // A captured payload is untrusted. Prohibiting DTDs outright (rather than merely
+        // nulling the resolver) makes any DOCTYPE throw, so the XXE class of input is never
+        // parsed at all — the body is shown verbatim instead of prettified.
+        var readerSettings = new XmlReaderSettings
         {
-            // Never resolve external entities: a captured payload is untrusted (XXE guard).
+            DtdProcessing = DtdProcessing.Prohibit,
             XmlResolver = null
         };
-        document.LoadXml(body);
+
+        var document = new XmlDocument { XmlResolver = null };
+        using (var stringReader = new StringReader(body))
+        using (var reader = XmlReader.Create(stringReader, readerSettings))
+        {
+            document.Load(reader);
+        }
 
         var sb = new StringBuilder();
         using (var writer = XmlWriter.Create(sb, settings))
