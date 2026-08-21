@@ -134,6 +134,42 @@ public static class ApiEndpoints
             return Results.Json(new { cleared = true }, Json);
         });
 
+        // Exchanges captured out-of-process by the IIS module are posted here. They arrive already
+        // redacted by the module; the tier is forced so a client cannot mislabel its source.
+        app.MapPost("/api/ingest", async (HttpContext ctx, ExchangeRing ring) =>
+        {
+            List<Capture.Exchange>? items;
+            try
+            {
+                items = await JsonSerializer.DeserializeAsync<List<Capture.Exchange>>(ctx.Request.Body, Json);
+            }
+            catch (JsonException)
+            {
+                return Results.BadRequest(new { error = "invalid exchange payload" });
+            }
+
+            if (items is null)
+            {
+                return Results.BadRequest(new { error = "empty payload" });
+            }
+
+            var ingested = 0;
+            foreach (var exchange in items)
+            {
+                exchange.Tier = CaptureTier.IisModule;
+                if (exchange.StartedUtc == default)
+                {
+                    exchange.StartedUtc = DateTimeOffset.UtcNow;
+                }
+
+                exchange.CompletedUtc ??= exchange.StartedUtc;
+                ring.Append(exchange);
+                ingested++;
+            }
+
+            return Results.Json(new { ingested }, Json);
+        });
+
         // The point of the whole tool: capture toggles under a running application,
         // with no app pool recycle.
         app.MapPost("/api/capture/start", (EtwCaptureService capture) =>
