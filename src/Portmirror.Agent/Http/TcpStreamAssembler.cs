@@ -84,26 +84,70 @@ public sealed class TcpStreamAssembler
     /// </summary>
     public byte[] SkipGap()
     {
-        if (_pending.Count == 0)
+        PurgeStale();
+
+        // Jump to the earliest buffered segment that lies *ahead* of the stream position.
+        // Never move backwards onto an already-delivered key: that would re-emit stale bytes
+        // and strand the stream behind a gap the peer will never refill.
+        uint? target = null;
+        foreach (var key in _pending.Keys)
+        {
+            if (Delta(key, _next) <= 0)
+            {
+                continue;
+            }
+
+            if (target is null || Delta(key, target.Value) < 0)
+            {
+                target = key;
+            }
+        }
+
+        if (target is null)
         {
             return Array.Empty<byte>();
         }
 
-        var earliest = _pending.Keys.First();
-        foreach (var key in _pending.Keys)
-        {
-            if (Delta(key, earliest) < 0)
-            {
-                earliest = key;
-            }
-        }
-
-        DiscardedBytes += Math.Max(0, Delta(earliest, _next));
-        _next = earliest;
+        DiscardedBytes += Delta(target.Value, _next);
+        _next = target.Value;
 
         var output = new List<byte>();
         DrainContiguous(output);
         return output.ToArray();
+    }
+
+    /// <summary>
+    /// Drops buffered segments that fell wholly at or behind the stream position — for example
+    /// after a resegmented retransmit delivered a superset of their bytes. Without this they
+    /// strand in the buffer forever and confuse <see cref="SkipGap"/>'s choice of target.
+    /// </summary>
+    private void PurgeStale()
+    {
+        if (_pending.Count == 0)
+        {
+            return;
+        }
+
+        List<uint>? stale = null;
+        foreach (var (key, segment) in _pending)
+        {
+            if (Delta(key, _next) + segment.Length <= 0)
+            {
+                (stale ??= new List<uint>()).Add(key);
+            }
+        }
+
+        if (stale is null)
+        {
+            return;
+        }
+
+        foreach (var key in stale)
+        {
+            _buffered -= _pending[key].Length;
+            DiscardedBytes += _pending[key].Length;
+            _pending.Remove(key);
+        }
     }
 
     private void Buffer(uint sequence, byte[] payload)
@@ -114,14 +158,14 @@ public sealed class TcpStreamAssembler
             return;
         }
 
-        if (existing is not null)
-        {
-            _buffered -= existing.Length;
-        }
+        // Bytes the incoming segment would reclaim by replacing a same-key entry. The counter
+        // is only adjusted once the segment is actually stored, so the refuse path below leaves
+        // both _buffered and _pending untouched rather than drifting.
+        var reclaimed = existing?.Length ?? 0;
 
         // Under memory pressure, drop the furthest-out segment: it is the least likely to be
         // the one unblocking the stream.
-        while (_buffered + payload.Length > _maxBuffered && _pending.Count > 0)
+        while (_buffered - reclaimed + payload.Length > _maxBuffered && _pending.Count > 0)
         {
             var furthest = _pending.Keys.First();
             foreach (var key in _pending.Keys)
@@ -142,14 +186,14 @@ public sealed class TcpStreamAssembler
             _pending.Remove(furthest);
         }
 
-        if (_buffered + payload.Length > _maxBuffered)
+        if (_buffered - reclaimed + payload.Length > _maxBuffered)
         {
             DiscardedBytes += payload.Length;
             return;
         }
 
+        _buffered += payload.Length - reclaimed;
         _pending[sequence] = payload;
-        _buffered += payload.Length;
     }
 
     private void Consume(byte[] payload, List<byte> output)
@@ -163,6 +207,10 @@ public sealed class TcpStreamAssembler
     {
         while (true)
         {
+            // Advancing _next can leave earlier buffered segments wholly behind it; clear them
+            // so they cannot strand or be mistaken for a future gap.
+            PurgeStale();
+
             if (_pending.TryGetValue(_next, out var exact))
             {
                 _pending.Remove(_next);

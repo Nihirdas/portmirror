@@ -57,11 +57,11 @@
   .empty { padding: 40px 16px; color: var(--muted); text-align: center; }
   .muted { color: var(--muted); }
   aside dl.hdr { grid-template-columns: minmax(120px, auto) 1fr; gap: 3px 12px; margin: 0 0 10px; }
-  aside dl.hdr dt { color: var(--accent2); font-family: var(--mono); font-size: 11px; }
+  aside dl.hdr dt { color: var(--accent); font-family: var(--mono); font-size: 11px; }
   aside dl.hdr dd { font-family: var(--mono); font-size: 11px; word-break: break-all; }
   .bmeta { font-family: var(--mono); font-size: 11px; color: var(--muted); margin: 0 0 6px;
            display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .tog { font: inherit; font-size: 11px; padding: 2px 9px; border: 1px solid var(--line);
+  .tog { font: inherit; font-size: 11px; padding: 2px 9px; border: 1px solid var(--border);
          background: var(--panel); color: var(--text); border-radius: 5px; cursor: pointer; }
   .tog:hover { border-color: var(--accent); color: var(--accent); }
   .banner { padding: 8px 16px; background: color-mix(in srgb, var(--warn) 18%, transparent);
@@ -156,6 +156,7 @@
     }
     if (selected !== id) { return; }  // a newer row was clicked while this loaded
 
+    for (const k in BODIES) { delete BODIES[k]; }
     const x = data.exchange || {};
     const fmt = data.formatted || {};
     const field = (k, v) => v == null || v === '' ? '' : `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`;
@@ -227,7 +228,7 @@
     BODIES[bid] = { raw: raw, pretty: pretty };
 
     out += `<div class="bmeta">${esc(meta)}`;
-    if (canPretty) { out += ` <button class="tog" data-b="${bid}" data-raw="1">raw</button>`; }
+    if (canPretty) { out += ` <button class="tog" data-b="${bid}" data-raw="0">raw</button>`; }
     out += `</div><pre id="${bid}">${esc(pretty)}</pre>`;
     return out;
   }

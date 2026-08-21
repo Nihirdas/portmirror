@@ -148,4 +148,85 @@ public class TcpStreamAssemblerTests
         Assert.True(a.PendingBytes <= 4096, $"buffered {a.PendingBytes} bytes");
         Assert.True(a.DiscardedBytes > 0);
     }
+
+    // --- Regression: findings from the adversarial review of the reassembly layer ---
+
+    [Fact]
+    public void A_resegmented_retransmit_does_not_strand_an_earlier_out_of_order_segment()
+    {
+        // Buffer a future segment, then deliver a superset retransmit that covers it entirely.
+        // The stale buffered copy must not linger — if it does, SkipGap later walks the stream
+        // backwards onto already-delivered bytes and wedges the connection.
+        var a = new TcpStreamAssembler(0);
+        a.Add(10, B("WORLD"));                 // future, buffered
+        Assert.Equal(1, a.PendingSegments);
+
+        var delivered = a.Add(0, B("abcdefghijklmnopqrst"));  // 20-byte superset of 0..19
+        Assert.Equal("abcdefghijklmnopqrst", S(delivered));
+        Assert.Equal(0, a.PendingSegments);    // the stale [10,"WORLD"] must be gone
+        Assert.Equal(0, a.PendingBytes);
+        Assert.Equal(20u, a.NextSequence);
+    }
+
+    [Fact]
+    public void SkipGap_never_moves_the_stream_position_backwards()
+    {
+        var a = new TcpStreamAssembler(0);
+        a.Add(0, B("abcdefghijklmnopqrst"));   // delivers 0..19, _next = 20
+        a.Add(10, B("WORLD"));                 // wholly in the past now
+
+        var released = a.SkipGap();
+
+        Assert.Empty(released);                // nothing ahead of the stream to release
+        Assert.Equal(20u, a.NextSequence);     // must not rewind to 10
+        Assert.Equal(0, a.PendingSegments);
+    }
+
+    [Fact]
+    public void SkipGap_still_jumps_forward_over_a_genuine_gap()
+    {
+        var a = new TcpStreamAssembler(0);
+        a.Add(0, B("abc"));                    // delivers 0..2, _next = 3
+        a.Add(10, B("xyz"));                   // bytes 3..9 never arrived
+
+        var released = a.SkipGap();
+
+        Assert.Equal("xyz", S(released));
+        Assert.Equal(13u, a.NextSequence);
+    }
+
+    [Fact]
+    public void A_refused_same_key_replacement_leaves_the_byte_count_consistent()
+    {
+        // The cap refuses an oversized replacement of an existing key. The counter must not
+        // drift: a drift here permanently loosens the memory cap.
+        var a = new TcpStreamAssembler(0, maxBufferedBytes: 4096);
+        a.Add(100, new byte[2000]);
+        a.Add(3000, new byte[1500]);
+        Assert.Equal(3500, a.PendingBytes);
+
+        a.Add(3000, new byte[2500]);           // 3500 - 1500 + 2500 = 4500 > 4096 → refused
+
+        Assert.Equal(3500, a.PendingBytes);    // old 1500 entry kept; counter unchanged
+        Assert.True(a.PendingBytes >= 0);
+    }
+
+    [Fact]
+    public void Byte_count_stays_non_negative_and_true_after_a_refused_replacement_drains()
+    {
+        var a = new TcpStreamAssembler(0, maxBufferedBytes: 4096);
+        a.Add(100, new byte[2000]);
+        a.Add(3000, new byte[1500]);
+        a.Add(3000, new byte[2500]);           // refused
+
+        // Fill the gap so everything buffered drains; the count must return exactly to zero,
+        // never negative (which would let the cap buffer past its limit forever).
+        a.Add(0, new byte[100]);               // _next 0..99
+        a.Add(100, new byte[2900]);            // reaches 3000, draining the 1500 there too
+
+        Assert.True(a.PendingBytes >= 0, $"buffered went negative: {a.PendingBytes}");
+        Assert.Equal(0, a.PendingSegments);
+        Assert.Equal(0, a.PendingBytes);
+    }
+
 }
