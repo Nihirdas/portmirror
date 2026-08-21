@@ -1,0 +1,199 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>portmirror</title>
+<style>
+  :root {
+    --bg: #fbfbfd; --panel: #fff; --border: #e2e4ea; --text: #1c1f26; --muted: #6b7280;
+    --accent: #1f6feb; --ok: #1a7f37; --warn: #9a6700; --err: #cf222e; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --panel: #161b22; --border: #30363d; --text: #e6edf3; --muted: #8b949e;
+      --accent: #58a6ff; --ok: #3fb950; --warn: #d29922; --err: #f85149;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+           padding: 10px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
+  h1 { font-size: 15px; margin: 0; letter-spacing: .02em; }
+  h1 span { color: var(--muted); font-weight: 400; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; background: var(--muted); }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
+  .stats { color: var(--muted); font-family: var(--mono); font-size: 12px; }
+  .grow { flex: 1; }
+  button, input, select {
+    font: inherit; color: var(--text); background: var(--panel);
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px;
+  }
+  button { cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  main { display: grid; grid-template-columns: 1fr; gap: 0; }
+  @media (min-width: 1100px) { main.split { grid-template-columns: 1fr 460px; } }
+  .tablewrap { overflow: auto; max-height: calc(100vh - 108px); }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { position: sticky; top: 0; background: var(--panel); font-size: 12px; color: var(--muted);
+       font-weight: 600; z-index: 1; }
+  td.url { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 1px; width: 100%;
+           font-family: var(--mono); font-size: 12px; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  tbody tr.sel { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  .verb { font-family: var(--mono); font-size: 12px; font-weight: 600; }
+  .s2 { color: var(--ok); } .s3 { color: var(--accent); } .s4 { color: var(--warn); } .s5 { color: var(--err); }
+  .partial { color: var(--muted); font-style: italic; }
+  aside { border-left: 1px solid var(--border); padding: 14px 16px; overflow: auto;
+          max-height: calc(100vh - 108px); background: var(--panel); }
+  aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  pre { font-family: var(--mono); font-size: 12px; background: var(--bg); border: 1px solid var(--border);
+        border-radius: 6px; padding: 10px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 0 0 14px; font-size: 13px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; font-family: var(--mono); font-size: 12px; word-break: break-all; }
+  .empty { padding: 40px 16px; color: var(--muted); text-align: center; }
+  .banner { padding: 8px 16px; background: color-mix(in srgb, var(--warn) 18%, transparent);
+            border-bottom: 1px solid var(--border); font-size: 13px; }
+</style>
+
+<header>
+  <h1>portmirror <span id="host"></span></h1>
+  <span><span class="dot" id="dot"></span> <span id="state">connecting</span></span>
+  <button id="toggle">Stop capture</button>
+  <input id="q" placeholder="filter url, verb, client ip" style="width: 220px">
+  <select id="status">
+    <option value="">any status</option>
+    <option value="200">200</option><option value="301">301</option><option value="400">400</option>
+    <option value="401">401</option><option value="403">403</option><option value="404">404</option>
+    <option value="500">500</option><option value="503">503</option>
+  </select>
+  <button id="pause">Pause</button>
+  <button id="clear">Clear</button>
+  <span class="grow"></span>
+  <span class="stats" id="stats"></span>
+</header>
+
+<div class="banner" id="banner" hidden></div>
+
+<main id="main">
+  <div class="tablewrap">
+    <table>
+      <thead><tr>
+        <th>time</th><th>verb</th><th>status</th><th>ms</th><th>url</th><th>client</th><th>queue</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty">No exchanges captured yet.</div>
+  </div>
+  <aside id="detail" hidden></aside>
+</main>
+
+<script>
+  const MAX_ROWS = 500;
+  const el = (id) => document.getElementById(id);
+  const rows = el('rows');
+  let paused = false, selected = null, stream = null, byId = new Map();
+
+  const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const statusClass = (s) => s ? 's' + String(s)[0] : '';
+  const hhmmss = (iso) => { try { return new Date(iso).toISOString().substring(11, 23); } catch { return ''; } };
+
+  function qs() {
+    const p = new URLSearchParams();
+    if (el('q').value.trim()) p.set('q', el('q').value.trim());
+    if (el('status').value) p.set('status', el('status').value);
+    return p;
+  }
+
+  function addRow(x, prepend = true) {
+    byId.set(x.id, x);
+    const tr = document.createElement('tr');
+    tr.dataset.id = x.id;
+    tr.innerHTML =
+      `<td>${hhmmss(x.startedUtc)}</td>` +
+      `<td class="verb">${esc(x.verb || '-')}</td>` +
+      `<td class="verb ${statusClass(x.statusCode)}">${x.statusCode ?? (x.partial ? '<span class="partial">open</span>' : '-')}</td>` +
+      `<td>${x.durationMs != null ? x.durationMs.toFixed(1) : '-'}</td>` +
+      `<td class="url" title="${esc(x.url)}">${esc(x.url || '-')}</td>` +
+      `<td>${esc(x.clientIp || '-')}</td>` +
+      `<td>${esc(x.queueName || '-')}</td>`;
+    tr.onclick = () => select(x.id);
+    if (prepend) rows.prepend(tr); else rows.append(tr);
+    while (rows.children.length > MAX_ROWS) rows.lastElementChild.remove();
+    el('empty').hidden = rows.children.length > 0;
+  }
+
+  function select(id) {
+    selected = id;
+    for (const tr of rows.children) tr.classList.toggle('sel', tr.dataset.id === id);
+    const x = byId.get(id);
+    if (!x) return;
+    const d = el('detail');
+    d.hidden = false;
+    el('main').classList.add('split');
+    const field = (k, v) => v == null || v === '' ? '' : `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`;
+    d.innerHTML =
+      `<h2>Exchange</h2><dl>` +
+      field('verb', x.verb) + field('status', x.statusCode) + field('duration ms', x.durationMs) +
+      field('started', x.startedUtc) + field('completed', x.completedUtc) +
+      field('client', x.clientIp) + field('queue', x.queueName) + field('site', x.siteId) +
+      field('tier', x.tier) + field('partial', x.partial ? 'yes — no terminal event seen' : '') +
+      `</dl><h2>Url</h2><pre>${esc(x.url || '(not reported)')}</pre>` +
+      (x.request || x.response ? '' :
+        `<h2>Bodies</h2><pre>Not available at this capture tier.
+This build reads HTTP.SYS metadata, which covers every inbound request
+including same-host traffic, but carries no payload.</pre>`) +
+      `<h2>Raw</h2><pre>${esc(JSON.stringify(x, null, 2))}</pre>`;
+  }
+
+  async function refreshAgent() {
+    try {
+      const a = await (await fetch('/api/agent')).json();
+      el('host').textContent = a.host + ' · v' + a.version;
+      el('dot').className = 'dot' + (a.capturing ? ' live' : '');
+      el('state').textContent = a.capturing ? 'capturing' : 'idle';
+      el('toggle').textContent = a.capturing ? 'Stop capture' : 'Start capture';
+      el('stats').textContent =
+        `${a.exchangesEmitted} exchanges · ${a.eventsSeen} etw events · ${a.retained}/${a.capacity} retained`;
+      const warn = !a.elevated ? 'Not running elevated — an ETW session needs administrator rights.'
+                 : !a.redactionEnabled ? 'Redaction is OFF. Captured payloads may contain card data and tokens.'
+                 : null;
+      el('banner').hidden = !warn;
+      if (warn) el('banner').textContent = warn;
+    } catch { el('state').textContent = 'agent unreachable'; }
+  }
+
+  function connect() {
+    if (stream) stream.close();
+    const p = qs();
+    stream = new EventSource('/api/stream?' + p.toString());
+    stream.onmessage = (m) => { if (!paused) addRow(JSON.parse(m.data)); };
+  }
+
+  async function reload() {
+    rows.innerHTML = ''; byId.clear();
+    const p = qs(); p.set('limit', '200');
+    const data = await (await fetch('/api/exchanges?' + p.toString())).json();
+    for (const x of data.items) addRow(x, false);
+    connect();
+  }
+
+  el('toggle').onclick = async () => {
+    const capturing = el('toggle').textContent.startsWith('Stop');
+    await fetch('/api/capture/' + (capturing ? 'stop' : 'start'), { method: 'POST' });
+    refreshAgent();
+  };
+  el('pause').onclick = () => { paused = !paused; el('pause').textContent = paused ? 'Resume' : 'Pause'; };
+  el('clear').onclick = async () => { await fetch('/api/exchanges', { method: 'DELETE' }); reload(); };
+  el('q').oninput = debounce(reload, 350);
+  el('status').onchange = reload;
+
+  function debounce(fn, ms) { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }
+
+  refreshAgent();
+  reload();
+  setInterval(refreshAgent, 3000);
+</script>

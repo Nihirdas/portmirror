@@ -1,0 +1,13 @@
+bin/
+obj/
+publish/
+artifacts/
+*.user
+*.suo
+.vs/
+.idea/
+.vscode/
+*.etl
+*.pcapng
+TestResults/
+.DS_Store

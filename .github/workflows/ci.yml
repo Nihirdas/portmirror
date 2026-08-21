@@ -1,0 +1,51 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore tests/Portmirror.Tests/Portmirror.Tests.csproj
+
+      - name: Build
+        run: dotnet build tests/Portmirror.Tests/Portmirror.Tests.csproj -c Release --no-restore
+
+      - name: Test
+        run: dotnet test tests/Portmirror.Tests/Portmirror.Tests.csproj -c Release --no-build --logger "console;verbosity=normal"
+
+      - name: Publish single-file agent
+        run: >
+          dotnet publish src/Portmirror.Agent/Portmirror.Agent.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:PublishSingleFile=true -o publish
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portmirror-win-x64
+          path: publish/
+          if-no-files-found: error
+
+      - name: Publish framework-dependent agent
+        run: >
+          dotnet publish src/Portmirror.Agent/Portmirror.Agent.csproj
+          -c Release -r win-x64 --no-self-contained
+          -o publish-fx
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portmirror-win-x64-fxdependent
+          path: publish-fx/
+          if-no-files-found: error

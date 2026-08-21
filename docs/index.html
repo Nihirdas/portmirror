@@ -1,0 +1,754 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portmirror</title>
+<meta name="description" content="Portmirror is an open-source HTTP capture agent for Windows and IIS. Local-first, no account, no cloud — and no app pool recycle to start capturing.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230A0F14'/%3E%3Cpath d='M6 12h20M6 20h20' stroke='%2335D6E7' stroke-width='2.5' stroke-linecap='round'/%3E%3Ccircle cx='11' cy='12' r='3' fill='%2335D6E7'/%3E%3Ccircle cx='21' cy='20' r='3' fill='%23F2A65A'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;700;800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+  :root{
+    --ground:#0A0F14; --surface:#101822; --surface-2:#0D141C; --line:#1D2A38; --line-bright:#2B3E52;
+    --ink:#DCE6F0; --ink-dim:#7E90A4; --ink-faint:#55677B;
+    --signal:#35D6E7; --signal-deep:#0E7C8A; --mirror:#F2A65A;
+    --ok:#4ED88A; --warn:#F2C14E; --bad:#FF6B6B;
+    --display:'Archivo','Helvetica Neue',Arial,sans-serif;
+    --body:'IBM Plex Sans',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+    --maxw:1120px; --rail:34px;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+  body{
+    margin:0; background:var(--ground); color:var(--ink);
+    font:400 16px/1.65 var(--body); -webkit-font-smoothing:antialiased;
+    overflow-x:hidden;
+  }
+  h1,h2,h3,.display{font-family:var(--display); font-weight:800; letter-spacing:-.025em; text-wrap:balance; margin:0}
+  a{color:var(--signal); text-decoration:none}
+  a:hover{text-decoration:underline}
+  :focus-visible{outline:2px solid var(--signal); outline-offset:3px; border-radius:4px}
+  code,.mono{font-family:var(--mono); font-size:.9em}
+
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 24px}
+  .rail{position:relative}
+  @media (min-width:900px){
+    .rail{padding-left:var(--rail)}
+    .rail::before{content:""; position:absolute; left:0; top:.55em; bottom:0; width:1px; background:linear-gradient(180deg,var(--line-bright),transparent 85%)}
+    .rail::after{content:""; position:absolute; left:-3.5px; top:.5em; width:8px; height:8px; border-radius:50%; background:var(--signal); box-shadow:0 0 0 4px rgba(53,214,231,.14)}
+  }
+
+  .eyebrow{
+    font-family:var(--mono); font-size:.72rem; font-weight:600; letter-spacing:.16em;
+    text-transform:uppercase; color:var(--signal); margin:0 0 14px
+  }
+  .lede{color:var(--ink-dim); font-size:1.08rem; max-width:62ch}
+  section{padding:88px 0; border-top:1px solid var(--line)}
+  section.alt{background:var(--surface-2)}
+  h2{font-size:clamp(1.7rem,3.6vw,2.4rem); margin-bottom:14px}
+  h3{font-size:1.05rem; font-weight:700; letter-spacing:-.01em}
+
+  /* ---------- nav ---------- */
+  nav{
+    position:sticky; top:0; z-index:40; background:rgba(10,15,20,.82);
+    backdrop-filter:blur(12px); border-bottom:1px solid var(--line);
+  }
+  .nav-in{display:flex; align-items:center; gap:28px; height:62px}
+  .brand{display:flex; align-items:center; gap:10px; font-family:var(--display); font-weight:800; font-size:1.06rem; letter-spacing:-.03em; color:var(--ink)}
+  .brand:hover{text-decoration:none}
+  .glyph{width:22px; height:22px; flex:none}
+  .nav-links{display:none; gap:24px; margin-left:auto; font-size:.9rem}
+  .nav-links a{color:var(--ink-dim)}
+  .nav-links a:hover{color:var(--ink); text-decoration:none}
+  .nav-cta{margin-left:auto}
+  @media (min-width:820px){ .nav-links{display:flex} .nav-cta{margin-left:0} }
+
+  /* ---------- buttons ---------- */
+  .btn{
+    display:inline-flex; align-items:center; gap:.55em; font-family:var(--body); font-weight:600;
+    font-size:.94rem; padding:.72em 1.25em; border-radius:8px; border:1px solid transparent;
+    cursor:pointer; transition:transform .16s ease, border-color .2s ease, background .2s ease, color .2s ease;
+  }
+  .btn:hover{text-decoration:none; transform:translateY(-1px)}
+  .btn-primary{background:var(--signal); color:#04252A; border-color:var(--signal)}
+  .btn-primary:hover{background:#5BE3F1}
+  .btn-ghost{border-color:var(--line-bright); color:var(--ink); background:transparent}
+  .btn-ghost:hover{border-color:var(--signal); color:var(--signal)}
+  .btn-sm{padding:.5em .9em; font-size:.85rem}
+
+  /* ---------- hero ---------- */
+  header.hero{
+    position:relative; overflow:hidden; padding:76px 0 0;
+    background:
+      radial-gradient(760px 420px at 78% -8%, rgba(53,214,231,.13), transparent 62%),
+      radial-gradient(620px 340px at 8% 4%, rgba(242,166,90,.07), transparent 58%);
+  }
+  .status{
+    display:inline-flex; align-items:center; gap:.6em; font-family:var(--mono);
+    font-size:.74rem; letter-spacing:.06em; text-transform:uppercase; color:var(--ink-dim);
+    border:1px solid var(--line-bright); border-radius:999px; padding:.42em .95em; background:rgba(255,255,255,.02);
+  }
+  .status .beacon{width:7px;height:7px;border-radius:50%;background:var(--mirror);box-shadow:0 0 0 3px rgba(242,166,90,.18); flex:none}
+  .status b{color:var(--mirror); font-weight:600}
+  h1{font-size:clamp(2.4rem,6.4vw,4.35rem); line-height:1.02; margin:26px 0 20px; max-width:19ch}
+  h1 em{font-style:normal; color:var(--signal)}
+  .hero .lede{font-size:clamp(1.05rem,2vw,1.22rem); max-width:56ch}
+  .hero-cta{display:flex; flex-wrap:wrap; gap:12px; margin-top:32px}
+  .hero-meta{
+    display:flex; flex-wrap:wrap; gap:8px 22px; margin-top:26px;
+    font-family:var(--mono); font-size:.78rem; color:var(--ink-faint)
+  }
+  .hero-meta span{display:flex; align-items:center; gap:.5em}
+  .hero-meta span::before{content:""; width:4px;height:4px;border-radius:50%;background:var(--signal-deep)}
+
+  /* ---------- capture console + mirror plane ---------- */
+  .console-stage{margin-top:64px; padding-bottom:96px}
+  .console{
+    border:1px solid var(--line-bright); border-radius:12px 12px 4px 4px; background:var(--surface);
+    box-shadow:0 -1px 0 rgba(53,214,231,.16) inset, 0 24px 60px -30px rgba(0,0,0,.9);
+    overflow:hidden;
+  }
+  .console-bar{
+    display:flex; align-items:center; gap:12px; padding:11px 16px;
+    border-bottom:1px solid var(--line); background:var(--surface-2);
+    font-family:var(--mono); font-size:.78rem; color:var(--ink-faint)
+  }
+  .console-bar .live{display:flex;align-items:center;gap:.5em;color:var(--ok)}
+  .console-bar .live i{width:6px;height:6px;border-radius:50%;background:var(--ok);animation:pulse 1.8s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.28}}
+  .console-bar .spacer{margin-left:auto}
+  .tail{width:100%; border-collapse:collapse; font-family:var(--mono); font-size:.8rem; font-variant-numeric:tabular-nums}
+  .tail th{
+    text-align:left; padding:9px 16px; color:var(--ink-faint); font-weight:500;
+    border-bottom:1px solid var(--line); font-size:.7rem; letter-spacing:.1em; text-transform:uppercase; white-space:nowrap
+  }
+  .tail td{padding:9px 16px; border-bottom:1px solid rgba(29,42,56,.6); white-space:nowrap; color:var(--ink-dim)}
+  .tail tr:last-child td{border-bottom:0}
+  .tail .u{color:var(--ink); overflow:hidden; text-overflow:ellipsis; max-width:1px; width:100%}
+  .tail .v{color:var(--signal); font-weight:500}
+  .s2{color:var(--ok)} .s3{color:var(--signal)} .s4{color:var(--warn)} .s5{color:var(--bad)}
+  .tail tr.in{animation:slide .45s cubic-bezier(.2,.8,.3,1) both}
+  @keyframes slide{from{opacity:0; transform:translateY(-7px); background:rgba(53,214,231,.07)} to{opacity:1; transform:none}}
+  .mirror-plane{position:relative; height:0}
+  .mirror-line{
+    height:1px; background:linear-gradient(90deg,transparent,var(--signal),transparent); opacity:.6
+  }
+  .mirror-label{
+    display:flex; align-items:center; gap:10px; justify-content:center; margin-top:10px;
+    font-family:var(--mono); font-size:.68rem; letter-spacing:.18em; text-transform:uppercase; color:var(--signal-deep)
+  }
+  .reflection{
+    height:120px; margin-top:2px; border-radius:0 0 12px 12px;
+    background:linear-gradient(180deg, rgba(53,214,231,.09), rgba(242,166,90,.05) 38%, transparent 88%);
+    -webkit-mask-image:linear-gradient(180deg,#000,transparent); mask-image:linear-gradient(180deg,#000,transparent);
+  }
+  .reflection-rows{
+    font-family:var(--mono); font-size:.8rem; color:var(--mirror); opacity:.3;
+    transform:scaleY(-1); padding:9px 16px 0; line-height:2.35;
+    overflow:hidden; height:100%;
+  }
+
+  /* ---------- generic grids ---------- */
+  .two{display:grid; gap:20px; grid-template-columns:1fr}
+  @media (min-width:860px){ .two{grid-template-columns:1fr 1fr; gap:24px} }
+  .three{display:grid; gap:18px; grid-template-columns:1fr}
+  @media (min-width:760px){ .three{grid-template-columns:repeat(3,1fr)} }
+  .card{
+    background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:24px;
+    transition:border-color .2s ease, transform .2s ease;
+  }
+  .card:hover{border-color:var(--line-bright); transform:translateY(-2px)}
+  .card p{color:var(--ink-dim); margin:.7em 0 0; font-size:.94rem}
+  .card .tag{
+    font-family:var(--mono); font-size:.68rem; letter-spacing:.13em; text-transform:uppercase;
+    color:var(--ink-faint); display:block; margin-bottom:10px
+  }
+
+  /* ---------- claim / counterclaim ---------- */
+  .claim{border-left:2px solid var(--bad); padding-left:20px}
+  .claim.good{border-left-color:var(--signal)}
+  .claim h3{margin-bottom:8px}
+  .claim p{color:var(--ink-dim); margin:0; font-size:.95rem}
+
+  /* ---------- scope lists ---------- */
+  .scope{list-style:none; padding:0; margin:0; display:grid; gap:11px}
+  .scope li{display:flex; gap:11px; align-items:flex-start; font-size:.95rem; color:var(--ink-dim)}
+  .scope li b{color:var(--ink); font-weight:600}
+  .scope .m{font-family:var(--mono); font-size:.9em; flex:none; width:1.1em; text-align:center; margin-top:.1em}
+  .scope .yes{color:var(--ok)} .scope .no{color:var(--ink-faint)}
+
+  /* ---------- tiers table ---------- */
+  .tablewrap{overflow-x:auto; border:1px solid var(--line); border-radius:10px; background:var(--surface)}
+  table.tiers{width:100%; border-collapse:collapse; font-size:.9rem; min-width:660px}
+  table.tiers th,table.tiers td{padding:14px 18px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top}
+  table.tiers thead th{
+    font-family:var(--mono); font-size:.7rem; letter-spacing:.1em; text-transform:uppercase;
+    color:var(--ink-faint); font-weight:500; background:var(--surface-2)
+  }
+  table.tiers tbody tr:last-child td{border-bottom:0}
+  table.tiers td strong{color:var(--ink); font-weight:600}
+  table.tiers td{color:var(--ink-dim)}
+  .yn{font-family:var(--mono); font-weight:600}
+  .yn.y{color:var(--ok)} .yn.n{color:var(--bad)}
+
+  /* ---------- roadmap ---------- */
+  .phases{display:grid; gap:0; margin-top:38px}
+  .phase{
+    display:grid; grid-template-columns:auto 1fr; gap:0 22px;
+    padding-bottom:34px; position:relative
+  }
+  .phase:not(:last-child)::before{
+    content:""; position:absolute; left:17px; top:38px; bottom:0; width:1px; background:var(--line)
+  }
+  .phase .num{
+    width:36px; height:36px; border-radius:50%; display:grid; place-items:center;
+    font-family:var(--mono); font-size:.8rem; font-weight:600;
+    border:1px solid var(--line-bright); background:var(--surface); color:var(--ink-faint); z-index:1
+  }
+  .phase.done .num{border-color:var(--signal); color:var(--signal); box-shadow:0 0 0 4px rgba(53,214,231,.1)}
+  .phase.now .num{border-color:var(--mirror); color:var(--mirror); box-shadow:0 0 0 4px rgba(242,166,90,.1)}
+  .phase-head{display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:8px}
+  .chip{
+    font-family:var(--mono); font-size:.66rem; letter-spacing:.11em; text-transform:uppercase;
+    padding:.3em .65em; border-radius:4px; border:1px solid var(--line-bright); color:var(--ink-faint)
+  }
+  .chip.done{color:var(--signal); border-color:rgba(53,214,231,.4); background:rgba(53,214,231,.07)}
+  .chip.now{color:var(--mirror); border-color:rgba(242,166,90,.4); background:rgba(242,166,90,.07)}
+  .phase p{color:var(--ink-dim); margin:0; font-size:.95rem; max-width:66ch}
+  .phase ul{margin:12px 0 0; padding-left:0; list-style:none; display:grid; gap:7px}
+  .phase ul li{font-size:.9rem; color:var(--ink-faint); display:flex; gap:10px}
+  .phase ul li::before{content:"—"; color:var(--line-bright); flex:none}
+
+  /* ---------- contribute ---------- */
+  .help{display:grid; gap:14px; grid-template-columns:1fr; margin-top:8px}
+  @media (min-width:760px){ .help{grid-template-columns:1fr 1fr} }
+  .help-item{border:1px solid var(--line); border-radius:9px; padding:18px 20px; background:var(--surface)}
+  .help-item h3{font-size:.97rem; margin-bottom:6px}
+  .help-item p{margin:0; font-size:.9rem; color:var(--ink-dim)}
+  .help-item .lvl{
+    font-family:var(--mono); font-size:.64rem; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--signal); display:block; margin-bottom:9px
+  }
+  .help-item .lvl.deep{color:var(--mirror)}
+  pre{
+    font-family:var(--mono); font-size:.82rem; background:var(--surface-2); border:1px solid var(--line);
+    border-radius:9px; padding:16px 18px; overflow-x:auto; color:var(--ink-dim); margin:18px 0 0; line-height:1.7
+  }
+  pre .c{color:var(--ink-faint)}
+  .rules{list-style:none; padding:0; margin:22px 0 0; display:grid; gap:9px}
+  .rules li{font-size:.93rem; color:var(--ink-dim); display:flex; gap:11px}
+  .rules li::before{content:"·"; color:var(--signal); font-weight:700; flex:none}
+
+  /* ---------- footer ---------- */
+  footer{border-top:1px solid var(--line); padding:46px 0 60px; background:var(--surface-2)}
+  .foot{display:flex; flex-wrap:wrap; gap:18px 32px; align-items:center; font-size:.86rem; color:var(--ink-faint)}
+  .foot a{color:var(--ink-dim)}
+  .foot .sep{margin-left:auto}
+  .disclaimer{margin-top:22px; font-size:.78rem; color:var(--ink-faint); max-width:70ch; line-height:1.7}
+
+  .reveal{opacity:0; transform:translateY(14px); transition:opacity .55s ease, transform .55s ease}
+  .reveal.seen{opacity:1; transform:none}
+
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important}
+    html{scroll-behavior:auto}
+    .reveal{opacity:1; transform:none}
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-in">
+    <a class="brand" href="#top">
+      <svg class="glyph" viewBox="0 0 32 32" aria-hidden="true">
+        <path d="M4 12h24M4 20h24" stroke="#35D6E7" stroke-width="2.2" stroke-linecap="round"/>
+        <circle cx="10" cy="12" r="3.2" fill="#35D6E7"/>
+        <circle cx="22" cy="20" r="3.2" fill="#F2A65A"/>
+      </svg>
+      portmirror
+    </a>
+    <div class="nav-links">
+      <a href="#idea">The idea</a>
+      <a href="#scope">Scope</a>
+      <a href="#parts">Two parts</a>
+      <a href="#capture">How it captures</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="#contribute">Contribute</a>
+    </div>
+    <a class="btn btn-ghost btn-sm nav-cta" href="https://github.com/Nihirdas/portmirror">GitHub</a>
+  </div>
+</nav>
+
+<header class="hero" id="top">
+  <div class="wrap">
+    <div class="rail">
+      <span class="status"><span class="beacon"></span> <b>Work in progress</b> · v0.1.0 · the agent captures, the rest is roadmap</span>
+      <h1>See the traffic on your server. <em>No proxy.</em></h1>
+      <p class="lede">
+        Portmirror is a small, open-source HTTP capture agent for Windows and IIS. It watches requests
+        arrive without inserting itself into the request path — so capture starts and stops underneath a
+        running application, and you never recycle an application pool to see what happened.
+      </p>
+      <div class="hero-cta">
+        <a class="btn btn-primary" href="https://github.com/Nihirdas/portmirror">View the source</a>
+        <a class="btn btn-ghost" href="#contribute">Help build it</a>
+      </div>
+      <div class="hero-meta">
+        <span>MIT licensed</span>
+        <span>Runs on your machine</span>
+        <span>No account, no sign-in</span>
+        <span>Nothing leaves your network</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="wrap console-stage">
+    <div class="console">
+      <div class="console-bar">
+        <span class="live"><i></i> capturing</span>
+        <span>kernel http stack</span>
+        <span class="spacer">bounded ring · 5 000 exchanges</span>
+      </div>
+      <table class="tail">
+        <thead>
+          <tr><th>time</th><th>verb</th><th>status</th><th>ms</th><th>path</th><th>client</th></tr>
+        </thead>
+        <tbody id="tail"></tbody>
+      </table>
+    </div>
+    <div class="mirror-plane"><div class="mirror-line"></div></div>
+    <div class="reflection"><div class="reflection-rows" id="refl" aria-hidden="true"></div></div>
+    <p class="mirror-label">the mirror plane — observed, never intercepted</p>
+  </div>
+</header>
+
+<section id="idea">
+  <div class="wrap rail">
+    <p class="eyebrow">The idea</p>
+    <h2>The tool everyone used is moving somewhere else.</h2>
+    <p class="lede">
+      For twenty years the answer to "what is this server actually sending?" was a free desktop proxy you
+      dropped on the box. That tool is now in legacy maintenance, and its actively developed successor is a
+      cross-platform product built around a user account and a subscription. That is a perfectly reasonable
+      way to run a business. It is a poor fit for a machine in a test lab.
+    </p>
+    <div class="two" style="margin-top:34px">
+      <div class="claim">
+        <h3>What got harder</h3>
+        <p>
+          Sign-in on a server that has no business having a user session. Features arriving faster than
+          anyone can use them. A capture tool with a pricing page. And the quiet expectation that your
+          traffic will pass through somebody else's infrastructure to be useful.
+        </p>
+      </div>
+      <div class="claim good">
+        <h3>What Portmirror does instead</h3>
+        <p>
+          One executable. It runs where the traffic is, keeps what it captures in memory on that machine,
+          and answers questions over a local HTTP endpoint. No account. No telemetry. No hosted service in
+          the middle. When you stop it, it is gone.
+        </p>
+      </div>
+    </div>
+
+    <h2 style="margin-top:64px">And a proxy was always the wrong shape for this.</h2>
+    <p class="lede">
+      There is a second, more stubborn problem. A proxy only captures traffic from a process that routes
+      through it — and a worker process resolves its proxy settings once, when it starts. Point a proxy at
+      a server whose application is already running and it sees nothing, which is why the usual advice ends
+      in <em style="color:var(--ink);font-style:normal">recycle the pool and try again</em> — throwing away
+      the state you were trying to observe.
+    </p>
+    <p class="lede" style="margin-top:16px">
+      No proxy can fix that; it is inherent to being one. So Portmirror is not a proxy. It reads the
+      kernel HTTP stack that every request already passes through, which means capture is something you
+      switch on and off under a live application, as many times as you like.
+    </p>
+  </div>
+</section>
+
+<section id="scope" class="alt">
+  <div class="wrap rail">
+    <p class="eyebrow">Scope</p>
+    <h2>Deliberately the five percent.</h2>
+    <p class="lede">
+      Most people reaching for a capture tool want to answer three questions: did the call arrive, what did
+      it return, and what was in the payload. The long tail of features around that gets used by almost
+      nobody. Portmirror aims to be excellent at the short list and to stay small enough to read in an
+      afternoon.
+    </p>
+    <div class="two" style="margin-top:34px">
+      <div class="card">
+        <span class="tag">In scope</span>
+        <ul class="scope">
+          <li><span class="m yes">+</span><span><b>Which requests arrived</b>, with verb, status, duration and caller</span></li>
+          <li><span class="m yes">+</span><span><b>Raw request and response bodies</b>, readable as JSON and XML</span></li>
+          <li><span class="m yes">+</span><span><b>Capture toggled at runtime</b>, with nothing restarted</span></li>
+          <li><span class="m yes">+</span><span><b>Search and filter</b> by path, verb, status or caller</span></li>
+          <li><span class="m yes">+</span><span><b>Secrets masked by default</b> before anything is stored</span></li>
+          <li><span class="m yes">+</span><span><b>A plain JSON API</b>, so anything can consume it</span></li>
+        </ul>
+      </div>
+      <div class="card">
+        <span class="tag">Not in scope</span>
+        <ul class="scope">
+          <li><span class="m no">&minus;</span><span>An account, a licence key or a pricing page</span></li>
+          <li><span class="m no">&minus;</span><span>A hosted service your traffic has to travel through</span></li>
+          <li><span class="m no">&minus;</span><span>A scripting language and rules engine of its own</span></li>
+          <li><span class="m no">&minus;</span><span>Performance profiling — good tools already exist</span></li>
+          <li><span class="m no">&minus;</span><span>Being a load generator, or a full test client</span></li>
+          <li><span class="m no">&minus;</span><span>Decrypting traffic it was never given the keys for</span></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="parts">
+  <div class="wrap rail">
+    <p class="eyebrow">Two parts</p>
+    <h2>An agent on the machine, and a console to watch many of them.</h2>
+    <p class="lede">
+      The project splits cleanly in two. The first part is the whole product for one server, and it is what
+      exists today. The second is what makes it bearable across twenty.
+    </p>
+    <div class="two" style="margin-top:34px">
+      <div class="card">
+        <span class="tag">Part one — the agent · exists today</span>
+        <h3>A single executable on the box</h3>
+        <p>
+          Drop it on the server, or install it as a Windows service. It reads the kernel HTTP stack,
+          keeps a bounded ring of recent exchanges in memory, and serves a live-tail page plus a JSON API
+          on a port you choose. Redaction runs before anything is stored. It holds no database and writes
+          no log of its own.
+        </p>
+      </div>
+      <div class="card">
+        <span class="tag">Part two — the console · roadmap</span>
+        <h3>One page, every machine</h3>
+        <p>
+          Watching one server means knowing which server to watch. The console aggregates agents so you can
+          open a browser, pick a machine and read its traffic without connecting to it directly. This is
+          the one place a relay genuinely helps — and it is a service you host yourself, on your own
+          network. There is no version of this that requires somebody else's cloud.
+        </p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="capture" class="alt">
+  <div class="wrap rail">
+    <p class="eyebrow">How it captures</p>
+    <h2>Three mechanisms, each honest about what it cannot do.</h2>
+    <p class="lede">
+      There is no single way to observe HTTP on Windows that is complete, payload-bearing and free of
+      installation cost. Rather than pretend otherwise, Portmirror picks the mechanism that matches what
+      you need — and documents the trade-off.
+    </p>
+    <div class="tablewrap" style="margin-top:30px">
+      <table class="tiers">
+        <thead>
+          <tr><th>Mechanism</th><th>Bodies</th><th>Same-machine traffic</th><th>What it costs you</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Kernel HTTP events</strong><br><span style="font-size:.85em">shipping today</span></td>
+            <td><span class="yn n">no</span></td>
+            <td><span class="yn y">yes</span></td>
+            <td>Nothing. No install into the application, no restart, no proxy.</td>
+          </tr>
+          <tr>
+            <td><strong>Packet capture</strong><br><span style="font-size:.85em">planned</span></td>
+            <td><span class="yn y">yes</span></td>
+            <td><span class="yn n">no</span></td>
+            <td>Nothing to install — but it only sees plaintext, and traffic between two processes on the same machine never reaches the layer it attaches to.</td>
+          </tr>
+          <tr>
+            <td><strong>Server-level module</strong><br><span style="font-size:.85em">planned</span></td>
+            <td><span class="yn y">yes</span></td>
+            <td><span class="yn y">yes</span></td>
+            <td>One restart when you install it — and only then. After that, capture toggles at runtime like everything else. The only place a response can be altered.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="lede" style="margin-top:22px; font-size:.95rem">
+      That middle row is the reason the third exists. Packet capture is wonderfully zero-touch, and on a
+      server where services talk to each other locally it is structurally blind to most of what you care
+      about.
+    </p>
+  </div>
+</section>
+
+<section id="roadmap">
+  <div class="wrap rail">
+    <p class="eyebrow">Roadmap</p>
+    <h2>Where this is going.</h2>
+    <p class="lede">
+      Phases are ordered because each one depends on the last. Everything below phase one is open — if a
+      piece of it interests you, it is yours to take.
+    </p>
+
+    <div class="phases">
+      <div class="phase done">
+        <div class="num">01</div>
+        <div>
+          <div class="phase-head"><h3>The agent</h3><span class="chip done">shipped</span></div>
+          <p>Capture inbound requests with no proxy and no recycle, and make them readable.</p>
+          <ul>
+            <li>Kernel HTTP event capture, correlated into one row per request</li>
+            <li>Bounded in-memory ring with gap-free incremental reads</li>
+            <li>Live-tail page, JSON API, runtime start and stop</li>
+            <li>Secret masking on by default, verified by tests</li>
+            <li>Single-file executable, runnable as a Windows service</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="phase now">
+        <div class="num">02</div>
+        <div>
+          <div class="phase-head"><h3>Payloads</h3><span class="chip now">in progress</span></div>
+          <p>The most requested thing the agent cannot do yet: show what was actually in the message.</p>
+          <ul>
+            <li>Request and response bodies, pretty-printed as JSON and XML</li>
+            <li>Stream reassembly for the zero-install capture path</li>
+            <li>A server-level module for the traffic that path cannot reach</li>
+            <li>Size caps and streaming so a large upload cannot exhaust memory</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="num">03</div>
+        <div>
+          <div class="phase-head"><h3>The console</h3><span class="chip">planned</span></div>
+          <p>Stop needing to know which machine to log into before you can look.</p>
+          <ul>
+            <li>Agents discovered and listed in one place</li>
+            <li>Live tail across machines, with a filter that spans them</li>
+            <li>Self-hosted, single binary, no external dependencies</li>
+            <li>Read-only by default, with auth in front of it</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="num">04</div>
+        <div>
+          <div class="phase-head"><h3>Fault injection</h3><span class="chip">planned</span></div>
+          <p>Error handling is hard to test when errors will not happen on demand.</p>
+          <ul>
+            <li>Rules that force a chosen status for a matching request</li>
+            <li>Injected latency and dropped connections</li>
+            <li>Scoped to a path, a caller or a time window, and off by default</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="phase">
+        <div class="num">05</div>
+        <div>
+          <div class="phase-head"><h3>Open questions</h3><span class="chip">exploring</span></div>
+          <p>Ideas that need a real use case before they earn any code. Opinions welcome in the issues.</p>
+          <ul>
+            <li>Exporting a capture session, and opening someone else's</li>
+            <li>Diffing two captures to find what changed between releases</li>
+            <li>Saved filters as named views</li>
+            <li>Packaging through the usual Windows package managers</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="contribute" class="alt">
+  <div class="wrap rail">
+    <p class="eyebrow">Contribute</p>
+    <h2>This is early, which is the good part.</h2>
+    <p class="lede">
+      The architecture is small and still soft enough that a good argument can change it. If you have ever
+      debugged a Windows server and wished for something simpler, you already have the context that matters
+      most here.
+    </p>
+
+    <div class="help">
+      <div class="help-item">
+        <span class="lvl">Start here</span>
+        <h3>Run it on your Windows build and report back</h3>
+        <p>
+          The kernel emits different event names and fields depending on the build. There is a diagnostics
+          endpoint that prints exactly what yours reports — paste its output into an issue and you have
+          made the tool work for a machine it has never seen.
+        </p>
+      </div>
+      <div class="help-item">
+        <span class="lvl">Start here</span>
+        <h3>Break the redaction</h3>
+        <p>
+          It masks card numbers, credential headers and obvious secret fields. It certainly misses formats
+          nobody has thought of yet. Finding one is a test case and a one-line fix.
+        </p>
+      </div>
+      <div class="help-item">
+        <span class="lvl deep">Deep end</span>
+        <h3>Stream reassembly</h3>
+        <p>
+          Turning captured packets back into whole HTTP messages: keep-alive, chunked encoding,
+          compression, out-of-order segments. Self-contained, properly interesting, and the thing standing
+          between the project and payloads.
+        </p>
+      </div>
+      <div class="help-item">
+        <span class="lvl deep">Deep end</span>
+        <h3>The server-level module</h3>
+        <p>
+          Reading bodies from inside the request pipeline without disturbing the application — which is
+          entirely possible to get wrong, and needs someone who has done it before to get right.
+        </p>
+      </div>
+      <div class="help-item">
+        <span class="lvl">Front end</span>
+        <h3>Make the console good</h3>
+        <p>
+          A live tail across many machines is a real interface design problem. The current page is
+          deliberately plain and would benefit from someone who cares about this.
+        </p>
+      </div>
+      <div class="help-item">
+        <span class="lvl">Anything</span>
+        <h3>Docs, packaging, install scripts</h3>
+        <p>
+          Getting it running should take one command. Every rough edge you hit while trying is worth
+          writing down, whether or not you fix it.
+        </p>
+      </div>
+    </div>
+
+    <h3 style="margin-top:52px; font-size:1.05rem">Building it</h3>
+    <pre><span class="c"># Windows, .NET 8 SDK</span>
+dotnet test    tests/Portmirror.Tests/Portmirror.Tests.csproj
+dotnet publish src/Portmirror.Agent/Portmirror.Agent.csproj -c Release -r win-x64 \
+               --self-contained true -p:PublishSingleFile=true -o publish</pre>
+    <p class="lede" style="margin-top:16px; font-size:.93rem">
+      Capture needs Windows and an elevated prompt, but the correlation, buffering and redaction logic is
+      deliberately separated from it — so the tests run anywhere and cover the parts most likely to break.
+    </p>
+
+    <h3 style="margin-top:44px; font-size:1.05rem">Ground rules</h3>
+    <ul class="rules">
+      <li>MIT, and no contributor agreement to sign. Your commit is your commit.</li>
+      <li>Small pull requests get read and merged. Large ones get read eventually.</li>
+      <li>Open an issue before a big change, so nobody writes the same thing twice.</li>
+      <li>If logic can be tested without a live capture, it should be.</li>
+      <li>A bug report with the diagnostics output attached is worth three without it.</li>
+    </ul>
+
+    <div class="hero-cta" style="margin-top:34px">
+      <a class="btn btn-primary" href="https://github.com/Nihirdas/portmirror/issues">Open an issue</a>
+      <a class="btn btn-ghost" href="https://github.com/Nihirdas/portmirror">Read the code</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot">
+      <span>Portmirror — MIT licensed</span>
+      <a href="https://github.com/Nihirdas/portmirror">github.com/Nihirdas/portmirror</a>
+      <span class="sep">Built in the open</span>
+    </div>
+    <p class="disclaimer">
+      An independent open-source project. Not affiliated with, sponsored by, or endorsed by any commercial
+      vendor, and no other product's name is used to suggest otherwise. Comparisons describe publicly
+      documented licensing and distribution models at the time of writing and may go out of date.
+    </p>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var rows = [
+      ['GET',  200, 4.65, '/api/orders?page=2',        '10.0.0.24'],
+      ['POST', 201, 12.4, '/api/orders',                '10.0.0.24'],
+      ['GET',  200, 3.11, '/api/inventory',             '10.0.0.31'],
+      ['POST', 500, 88.2, '/api/payments/authorise',    '10.0.0.9' ],
+      ['GET',  304, 1.02, '/assets/app.css',            '10.0.0.24'],
+      ['PUT',  204, 6.90, '/api/orders/8841',           '10.0.0.31'],
+      ['GET',  404, 2.44, '/api/orders/does-not-exist', '10.0.0.9' ],
+      ['POST', 401, 5.17, '/api/session',               '10.0.0.55'],
+      ['GET',  200, 7.83, '/api/customers/1204',        '10.0.0.31'],
+      ['GET',  503, 30.0, '/api/reports/nightly',       '10.0.0.9' ]
+    ];
+
+    var tbody = document.getElementById('tail');
+    var refl  = document.getElementById('refl');
+    var MAX = 7, i = 0;
+    var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function clock(offset) {
+      var t = new Date(Date.now() - offset * 1000);
+      return String(t.getUTCHours()).padStart(2, '0') + ':' +
+             String(t.getUTCMinutes()).padStart(2, '0') + ':' +
+             String(t.getUTCSeconds()).padStart(2, '0');
+    }
+
+    function build(row, offset, animate) {
+      var tr = document.createElement('tr');
+      if (animate) { tr.className = 'in'; }
+      tr.innerHTML =
+        '<td>' + clock(offset) + '</td>' +
+        '<td class="v">' + row[0] + '</td>' +
+        '<td class="s' + String(row[1])[0] + '">' + row[1] + '</td>' +
+        '<td>' + row[2].toFixed(2) + '</td>' +
+        '<td class="u">' + row[3] + '</td>' +
+        '<td>' + row[4] + '</td>';
+      return tr;
+    }
+
+    function mirror() {
+      var lines = [];
+      for (var n = 0; n < 4 && n < tbody.children.length; n++) {
+        var c = tbody.children[n].children;
+        lines.push(c[1].textContent + '  ' + c[2].textContent + '  ' + c[4].textContent);
+      }
+      refl.textContent = lines.join('\n');
+    }
+
+    // Seed the console so it never renders empty.
+    for (var s = MAX - 1; s >= 0; s--) {
+      tbody.appendChild(build(rows[s % rows.length], s * 3, false));
+    }
+    i = MAX;
+    mirror();
+
+    if (!reduce) {
+      setInterval(function () {
+        tbody.insertBefore(build(rows[i % rows.length], 0, true), tbody.firstChild);
+        i++;
+        while (tbody.children.length > MAX) { tbody.removeChild(tbody.lastChild); }
+        mirror();
+      }, 2300);
+    }
+
+    // One-time reveal for section content.
+    var targets = document.querySelectorAll('section .rail');
+    if ('IntersectionObserver' in window && !reduce) {
+      targets.forEach(function (el) { el.classList.add('reveal'); });
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) { e.target.classList.add('seen'); io.unobserve(e.target); }
+        });
+      }, { rootMargin: '-60px 0px -10% 0px' });
+      targets.forEach(function (el) { io.observe(el); });
+    }
+  })();
+</script>
+</body>
+</html>
