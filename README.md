@@ -11,7 +11,26 @@ application pool**.
 
 ## Why
 
-Fiddler is a fine tool, but on a server it has a structural problem: it captures by making
+**Two reasons, and the first one has a date on it.**
+
+On 3 August 2026 Progress Telerik announced that [Fiddler Classic is licensed for non-commercial
+use only](https://www.telerik.com/fiddler/fiddler-classic/commercial-use), effective **17 September
+2026**. Personal, educational and individual learning use is still fine; commercial, business,
+organisational or revenue-generating use requires [Fiddler
+Everywhere](https://www.telerik.com/purchase/fiddler), a per-user subscription. Fiddler Classic
+itself "is not in active development and offers no commitments for releases, patches, or technical
+support" — [Telerik's
+documentation](https://www.telerik.com/fiddler/fiddler-classic/documentation/introduction).
+
+That is a fair way to run a business, and Fiddler Everywhere is a capable product. But the thing
+that went away was not a feature set — it was a small free local tool you could put on a test
+machine without asking anyone. Portmirror is not trying to replace Fiddler Everywhere; it is trying
+to be the small thing that got taken away.
+
+*(Licensing and pricing change. The links above are authoritative; this file is not. Checked August
+2026.)*
+
+The second reason is structural and has nothing to do with licensing: a proxy captures by making
 itself the machine's proxy. A .NET worker process resolves its proxy **once, at startup**, and
 WinINet proxy settings are per-user — so a `w3wp.exe` that was already running never routes
 through it. That is why "just run Fiddler on the box" so often ends in *recycle the app pool

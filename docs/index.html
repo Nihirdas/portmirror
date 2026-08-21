@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Portmirror</title>
-<meta name="description" content="Portmirror is an open-source HTTP capture agent for Windows and IIS. Local-first, no account, no cloud — and no app pool recycle to start capturing.">
+<meta name="description" content="Fiddler Classic stops being licensed for commercial use on 17 September 2026. Portmirror is an open-source, local-first HTTP capture agent for Windows and IIS — no account, no subscription, and no app pool recycle to start capturing.">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230A0F14'/%3E%3Cpath d='M6 12h20M6 20h20' stroke='%2335D6E7' stroke-width='2.5' stroke-linecap='round'/%3E%3Ccircle cx='11' cy='12' r='3' fill='%2335D6E7'/%3E%3Ccircle cx='21' cy='20' r='3' fill='%23F2A65A'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -167,6 +167,27 @@
     color:var(--ink-faint); display:block; margin-bottom:10px
   }
 
+  /* ---------- dated notice ---------- */
+  .notice{
+    display:grid; grid-template-columns:auto 1fr; gap:0 16px; align-items:start;
+    border:1px solid rgba(242,166,90,.34); border-radius:10px; padding:18px 20px;
+    background:linear-gradient(180deg,rgba(242,166,90,.08),rgba(242,166,90,.03));
+    margin:30px 0 0
+  }
+  .notice .when{
+    font-family:var(--mono); font-size:.7rem; letter-spacing:.11em; text-transform:uppercase;
+    color:var(--mirror); border-right:1px solid rgba(242,166,90,.28); padding-right:16px; white-space:nowrap
+  }
+  .notice p{margin:0; font-size:.93rem; color:var(--ink-dim)}
+  .notice p + p{margin-top:9px}
+  .notice a{color:var(--mirror)}
+  @media (max-width:640px){
+    .notice{grid-template-columns:1fr}
+    .notice .when{border-right:0; border-bottom:1px solid rgba(242,166,90,.28); padding:0 0 10px; margin-bottom:12px}
+  }
+  .src{font-size:.8rem; color:var(--ink-faint); margin-top:20px; line-height:1.8}
+  .src a{color:var(--ink-dim)}
+
   /* ---------- claim / counterclaim ---------- */
   .claim{border-left:2px solid var(--bad); padding-left:20px}
   .claim.good{border-left-color:var(--signal)}
@@ -287,7 +308,7 @@
   <div class="wrap">
     <div class="rail">
       <span class="status"><span class="beacon"></span> <b>Work in progress</b> · v0.1.0 · the agent captures, the rest is roadmap</span>
-      <h1>See the traffic on your server. <em>No proxy.</em></h1>
+      <h1>See the traffic on your server. <em>No proxy, no licence.</em></h1>
       <p class="lede">
         Portmirror is a small, open-source HTTP capture agent for Windows and IIS. It watches requests
         arrive without inserting itself into the request path — so capture starts and stops underneath a
@@ -298,7 +319,7 @@
         <a class="btn btn-ghost" href="#contribute">Help build it</a>
       </div>
       <div class="hero-meta">
-        <span>MIT licensed</span>
+        <span>MIT licensed, commercial use included</span>
         <span>Runs on your machine</span>
         <span>No account, no sign-in</span>
         <span>Nothing leaves your network</span>
@@ -329,44 +350,77 @@
 <section id="idea">
   <div class="wrap rail">
     <p class="eyebrow">The idea</p>
-    <h2>The tool everyone used is moving somewhere else.</h2>
+    <h2>On 17 September 2026, Fiddler Classic stops being licensed for commercial use.</h2>
     <p class="lede">
-      For twenty years the answer to "what is this server actually sending?" was a free desktop proxy you
-      dropped on the box. That tool is now in legacy maintenance, and its actively developed successor is a
-      cross-platform product built around a user account and a subscription. That is a perfectly reasonable
-      way to run a business. It is a poor fit for a machine in a test lab.
+      For two decades the answer to "what is this server actually sending?" was Fiddler Classic — free,
+      local, drop it on the box, read the traffic. That answer is changing, and the change has a date on it.
     </p>
+
+    <div class="notice">
+      <span class="when">Effective<br>17 Sep 2026</span>
+      <div>
+        <p>
+          On 3 August 2026 Progress Telerik announced that Fiddler Classic is licensed for
+          <strong style="color:var(--ink)">non-commercial use only</strong>. Personal projects, learning and
+          education are still fine. Commercial, business, organisational or revenue-generating use is not —
+          that requires Fiddler Everywhere, a per-user subscription starting around $9 per user per month
+          billed annually, tied to a vendor account.
+        </p>
+        <p>
+          Fiddler Classic itself, in Telerik's own documentation, "is not in active development and offers
+          no commitments for releases, patches, or technical support."
+        </p>
+      </div>
+    </div>
+
+    <p class="lede" style="margin-top:30px">
+      That is a legitimate way to run a business, and Fiddler Everywhere is a capable product built by people
+      who know this problem well. But it leaves a specific hole. The thing that disappeared was not a feature
+      set — it was a <em style="color:var(--ink);font-style:normal">small free local tool you could put on a
+      test machine without asking anyone</em>. Portmirror is not trying to replace Fiddler Everywhere. It is
+      trying to be the small thing that got taken away.
+    </p>
+
     <div class="two" style="margin-top:34px">
       <div class="claim">
-        <h3>What got harder</h3>
+        <h3>What a licence change costs you</h3>
         <p>
-          Sign-in on a server that has no business having a user session. Features arriving faster than
-          anyone can use them. A capture tool with a pricing page. And the quiet expectation that your
-          traffic will pass through somebody else's infrastructure to be useful.
+          A purchase conversation before you can read an HTTP response. A vendor account signed in on a
+          server that has no business having a user session. Per-seat maths for a tool that gets opened
+          twice a month. And a capture tool whose future is set by a roadmap you have no say in.
         </p>
       </div>
       <div class="claim good">
         <h3>What Portmirror does instead</h3>
         <p>
-          One executable. It runs where the traffic is, keeps what it captures in memory on that machine,
-          and answers questions over a local HTTP endpoint. No account. No telemetry. No hosted service in
-          the middle. When you stop it, it is gone.
+          One executable, MIT licensed. It runs where the traffic is, keeps what it captures in memory on
+          that machine, and answers questions over a local HTTP endpoint. No account, no seats, no
+          telemetry, no hosted service in the middle. When you stop it, it is gone.
         </p>
       </div>
     </div>
 
-    <h2 style="margin-top:64px">And a proxy was always the wrong shape for this.</h2>
+    <p class="src">
+      Sources, checked August 2026 —
+      <a href="https://www.telerik.com/fiddler/fiddler-classic/commercial-use">Fiddler Classic commercial use</a> ·
+      <a href="https://www.telerik.com/fiddler/fiddler-classic/documentation/introduction">Fiddler Classic documentation</a> ·
+      <a href="https://www.telerik.com/purchase/fiddler">Fiddler Everywhere pricing</a>.
+      Licensing and prices change; check the originals before relying on any of this.
+    </p>
+
+    <h2 style="margin-top:70px">And a proxy was always the wrong shape for this.</h2>
     <p class="lede">
-      There is a second, more stubborn problem. A proxy only captures traffic from a process that routes
-      through it — and a worker process resolves its proxy settings once, when it starts. Point a proxy at
-      a server whose application is already running and it sees nothing, which is why the usual advice ends
-      in <em style="color:var(--ink);font-style:normal">recycle the pool and try again</em> — throwing away
-      the state you were trying to observe.
+      There is a second, more stubborn problem, and it has nothing to do with licensing. A proxy only
+      captures traffic from a process that routes through it — and a worker process resolves its proxy
+      settings once, when it starts. Point a proxy at a server whose application is already running and it
+      sees nothing, which is why the usual advice ends in
+      <em style="color:var(--ink);font-style:normal">recycle the pool and try again</em> — throwing away the
+      state you were trying to observe.
     </p>
     <p class="lede" style="margin-top:16px">
-      No proxy can fix that; it is inherent to being one. So Portmirror is not a proxy. It reads the
-      kernel HTTP stack that every request already passes through, which means capture is something you
-      switch on and off under a live application, as many times as you like.
+      No proxy can fix that; it is inherent to being one. So Portmirror is not a proxy. It reads the kernel
+      HTTP stack that every request already passes through, which means capture is something you switch on
+      and off under a live application, as many times as you like.
     </p>
   </div>
 </section>
@@ -665,9 +719,11 @@ dotnet publish src/Portmirror.Agent/Portmirror.Agent.csproj -c Release -r win-x6
       <span class="sep">Built in the open</span>
     </div>
     <p class="disclaimer">
-      An independent open-source project. Not affiliated with, sponsored by, or endorsed by any commercial
-      vendor, and no other product's name is used to suggest otherwise. Comparisons describe publicly
-      documented licensing and distribution models at the time of writing and may go out of date.
+      An independent open-source project, not affiliated with, sponsored by, or endorsed by Progress
+      Software Corporation. Fiddler, Fiddler Classic, Fiddler Everywhere and Telerik are trademarks of
+      Progress Software Corporation, referred to here only to describe publicly documented licensing and
+      pricing as of August 2026. Those terms change — the linked sources are authoritative, this page is
+      not.
     </p>
   </div>
 </footer>
