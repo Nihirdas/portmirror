@@ -12,6 +12,24 @@ public class ReassemblyIntegrationTests
 {
     private static byte[] Wire(string s) => Encoding.ASCII.GetBytes(s.Replace("\n", "\r\n"));
 
+    /// <summary>
+    /// Builds a chunked message with correctly sized chunk headers. Hand-writing the hex sizes
+    /// in a fixture just moves the bug into the test.
+    /// </summary>
+    private static byte[] Chunked(string headers, params string[] chunks)
+    {
+        var sb = new StringBuilder();
+        sb.Append(headers.Replace("\n", "\r\n"));
+
+        foreach (var chunk in chunks)
+        {
+            sb.Append(chunk.Length.ToString("x")).Append("\r\n").Append(chunk).Append("\r\n");
+        }
+
+        sb.Append("0\r\n\r\n");
+        return Encoding.ASCII.GetBytes(sb.ToString());
+    }
+
     private static List<(uint seq, byte[] data)> Slice(byte[] raw, uint start, int size)
     {
         var parts = new List<(uint, byte[])>();
@@ -48,11 +66,10 @@ public class ReassemblyIntegrationTests
     [Fact]
     public void A_chunked_response_survives_being_captured_out_of_order()
     {
-        var raw = Wire(
-            "HTTP/1.1 200 OK\nContent-Type: application/json\nTransfer-Encoding: chunked\n\n" +
-            "1a\n{\"orders\":[{\"id\":8841,\n" +
-            "18\n\"total\":42.50}]}\n" +
-            "0\n\n");
+        var raw = Chunked(
+            "HTTP/1.1 200 OK\nContent-Type: application/json\nTransfer-Encoding: chunked\n\n",
+            "{\"orders\":[{\"id\":8841,",
+            "\"total\":42.50}]}");
 
         var segments = Slice(raw, 1000, 16);
         Assert.True(segments.Count > 3, "test needs several segments to shuffle");
