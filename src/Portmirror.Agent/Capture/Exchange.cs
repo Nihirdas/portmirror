@@ -24,9 +24,23 @@ public sealed class HttpMessage
 
     public string? ContentType { get; set; }
     public long? ContentLength { get; set; }
+
+    /// <summary>The body as readable text, after decompression and redaction. Null when the body
+    /// was empty or is binary — see <see cref="BodyFormat"/> and <see cref="BodyByteCount"/>.</summary>
     public string? Body { get; set; }
+
+    /// <summary>One of empty / json / xml / text / binary. Tells a client whether to offer a
+    /// pretty-print toggle, and whether a body exists at all.</summary>
+    public string BodyFormat { get; set; } = "empty";
+
+    /// <summary>Size of the body as captured on the wire (post-decompression), in bytes.</summary>
+    public long BodyByteCount { get; set; }
+
     public bool BodyRedacted { get; set; }
     public bool BodyTruncated { get; set; }
+
+    /// <summary>Set when a Content-Encoding was present but could not be decompressed.</summary>
+    public string? DecodeError { get; set; }
 }
 
 /// <summary>

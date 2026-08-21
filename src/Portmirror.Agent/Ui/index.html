@@ -55,6 +55,15 @@
   dt { color: var(--muted); }
   dd { margin: 0; font-family: var(--mono); font-size: 12px; word-break: break-all; }
   .empty { padding: 40px 16px; color: var(--muted); text-align: center; }
+  .muted { color: var(--muted); }
+  aside dl.hdr { grid-template-columns: minmax(120px, auto) 1fr; gap: 3px 12px; margin: 0 0 10px; }
+  aside dl.hdr dt { color: var(--accent2); font-family: var(--mono); font-size: 11px; }
+  aside dl.hdr dd { font-family: var(--mono); font-size: 11px; word-break: break-all; }
+  .bmeta { font-family: var(--mono); font-size: 11px; color: var(--muted); margin: 0 0 6px;
+           display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .tog { font: inherit; font-size: 11px; padding: 2px 9px; border: 1px solid var(--line);
+         background: var(--panel); color: var(--text); border-radius: 5px; cursor: pointer; }
+  .tog:hover { border-color: var(--accent); color: var(--accent); }
   .banner { padding: 8px 16px; background: color-mix(in srgb, var(--warn) 18%, transparent);
             border-bottom: 1px solid var(--border); font-size: 13px; }
 </style>
@@ -96,6 +105,8 @@
   const el = (id) => document.getElementById(id);
   const rows = el('rows');
   let paused = false, selected = null, stream = null, byId = new Map();
+  const BODIES = {};
+  let idSeq = 0;
 
   const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const statusClass = (s) => s ? 's' + String(s)[0] : '';
@@ -126,27 +137,99 @@
     el('empty').hidden = rows.children.length > 0;
   }
 
-  function select(id) {
+  async function select(id) {
     selected = id;
     for (const tr of rows.children) tr.classList.toggle('sel', tr.dataset.id === id);
-    const x = byId.get(id);
-    if (!x) return;
     const d = el('detail');
     d.hidden = false;
     el('main').classList.add('split');
+    d.innerHTML = '<h2>Exchange</h2><p class="muted">loading\u2026</p>';
+
+    let data;
+    try {
+      const res = await fetch('/api/exchanges/' + encodeURIComponent(id));
+      if (!res.ok) { throw new Error(String(res.status)); }
+      data = await res.json();
+    } catch (e) {
+      if (selected === id) { d.innerHTML = '<h2>Exchange</h2><pre>Could not load this exchange.</pre>'; }
+      return;
+    }
+    if (selected !== id) { return; }  // a newer row was clicked while this loaded
+
+    const x = data.exchange || {};
+    const fmt = data.formatted || {};
     const field = (k, v) => v == null || v === '' ? '' : `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`;
-    d.innerHTML =
+
+    let html =
       `<h2>Exchange</h2><dl>` +
       field('verb', x.verb) + field('status', x.statusCode) + field('duration ms', x.durationMs) +
-      field('started', x.startedUtc) + field('completed', x.completedUtc) +
-      field('client', x.clientIp) + field('queue', x.queueName) + field('site', x.siteId) +
-      field('tier', x.tier) + field('partial', x.partial ? 'yes — no terminal event seen' : '') +
-      `</dl><h2>Url</h2><pre>${esc(x.url || '(not reported)')}</pre>` +
-      (x.request || x.response ? '' :
-        `<h2>Bodies</h2><pre>Not available at this capture tier.
-This build reads HTTP.SYS metadata, which covers every inbound request
-including same-host traffic, but carries no payload.</pre>`) +
-      `<h2>Raw</h2><pre>${esc(JSON.stringify(x, null, 2))}</pre>`;
+      field('started', x.startedUtc) + field('client', x.clientIp) +
+      field('queue', x.queueName) + field('site', x.siteId) + field('tier', x.tier) +
+      field('partial', x.partial ? 'yes \u2014 no terminal event seen' : '') +
+      `</dl><h2>URL</h2><pre>${esc(x.url || '(not reported)')}</pre>`;
+
+    html += messageBlock('Request', x.request, fmt.request);
+    html += messageBlock('Response', x.response, fmt.response);
+
+    if (!x.request && !x.response) {
+      html += '<h2>Bodies</h2><pre>No payload at this capture tier.\n' +
+        'This build reads the kernel HTTP stack, which covers every inbound\n' +
+        'request including same-host traffic, but carries no body. Body\n' +
+        'capture arrives with the packet-capture and module tiers.</pre>';
+    }
+
+    d.innerHTML = html;
+
+    // Wire the raw/pretty toggles now that the markup exists.
+    d.querySelectorAll('.tog').forEach(function (btn) {
+      btn.onclick = function () {
+        const store = BODIES[btn.dataset.b];
+        const pre = document.getElementById(btn.dataset.b);
+        if (!store || !pre) { return; }
+        const showRaw = btn.dataset.raw === '0';
+        pre.textContent = showRaw ? store.raw : store.pretty;
+        btn.dataset.raw = showRaw ? '1' : '0';
+        btn.textContent = showRaw ? 'pretty' : 'raw';
+      };
+    });
+  }
+
+  function messageBlock(title, msg, formatted) {
+    if (!msg) { return ''; }
+    let out = `<h2>${title}</h2>`;
+
+    const headers = msg.headers || {};
+    const names = Object.keys(headers);
+    if (names.length) {
+      out += '<dl class="hdr">';
+      for (const k of names) { out += `<dt>${esc(k)}</dt><dd>${esc(headers[k])}</dd>`; }
+      out += '</dl>';
+    }
+
+    const marks = [];
+    if (msg.bodyRedacted) { marks.push('redacted'); }
+    if (msg.bodyTruncated) { marks.push('truncated'); }
+    if (msg.decodeError) { marks.push(msg.decodeError); }
+    const meta = (msg.bodyFormat || 'empty') +
+      (msg.bodyByteCount ? ` \u00b7 ${msg.bodyByteCount} bytes` : '') +
+      (marks.length ? ` \u00b7 ${marks.join(' \u00b7 ')}` : '');
+
+    if (msg.body == null) {
+      out += `<div class="bmeta">${esc(meta)}</div>`;
+      if (msg.bodyFormat === 'binary') { out += '<pre class="muted">[binary body not shown]</pre>'; }
+      return out;
+    }
+
+    const raw = msg.body;
+    const pretty = (formatted && formatted.pretty) || raw;
+    const canPretty = pretty !== raw;
+    const bid = 'b' + (idSeq++);
+    BODIES[bid] = { raw: raw, pretty: pretty };
+
+    out += `<div class="bmeta">${esc(meta)}`;
+    if (canPretty) { out += ` <button class="tog" data-b="${bid}" data-raw="1">raw</button>`; }
+    out += `</div><pre id="${bid}">${esc(pretty)}</pre>`;
+    return out;
   }
 
   async function refreshAgent() {

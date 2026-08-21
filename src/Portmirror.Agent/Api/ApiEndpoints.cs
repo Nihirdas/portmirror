@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Options;
 using Portmirror.Agent.Capture;
+using Portmirror.Agent.Http;
 using Portmirror.Agent.Storage;
 
 namespace Portmirror.Agent.Api;
@@ -89,17 +90,32 @@ public static class ApiEndpoints
             var take = Math.Clamp(limit ?? 200, 1, 2000);
             var filter = BuildFilter(q, status);
 
-            var items = since.HasValue
+            var found = since.HasValue
                 ? ring.Since(since.Value, take, filter)
                 : ring.Latest(take, filter);
 
+            var items = found.Select(ToSummary).ToList();
             return Results.Json(new { lastSeq = ring.LastSeq, count = items.Count, items }, Json);
         });
 
         app.MapGet("/api/exchanges/{id}", (ExchangeRing ring, string id) =>
         {
             var found = ring.ById(id);
-            return found is null ? Results.NotFound() : Results.Json(found, Json);
+
+            if (found is null)
+            {
+                return Results.NotFound();
+            }
+
+            return Results.Json(new
+            {
+                exchange = found,
+                formatted = new
+                {
+                    request = Formatted(found.Request),
+                    response = Formatted(found.Response)
+                }
+            }, Json);
         });
 
         app.MapDelete("/api/exchanges", (ExchangeRing ring) =>
@@ -166,7 +182,7 @@ public static class ApiEndpoints
                 {
                     cursor = exchange.Seq;
                     await ctx.Response.WriteAsync(
-                        $"data: {JsonSerializer.Serialize(exchange, Json)}\n\n", ct);
+                        $"data: {JsonSerializer.Serialize(ToSummary(exchange), Json)}\n\n", ct);
                 }
 
                 if (batch.Count == 0)
@@ -183,6 +199,56 @@ public static class ApiEndpoints
         {
             // Client went away; nothing to do.
         }
+    }
+
+    /// <summary>
+    /// A listing- and stream-friendly view of an exchange: every scalar field, plus a small
+    /// per-message body summary, but never the body text itself. Bodies can be large, so they
+    /// are fetched one at a time from the detail endpoint rather than streamed for every row.
+    /// </summary>
+    private static object ToSummary(Capture.Exchange e) => new
+    {
+        e.Seq,
+        e.Id,
+        e.CorrelationId,
+        e.StartedUtc,
+        e.CompletedUtc,
+        e.DurationMs,
+        e.Verb,
+        e.Url,
+        e.StatusCode,
+        e.ClientIp,
+        e.SiteId,
+        e.QueueName,
+        tier = e.Tier.ToString(),
+        e.Partial,
+        request = MessageSummary(e.Request),
+        response = MessageSummary(e.Response)
+    };
+
+    private static object? MessageSummary(Capture.HttpMessage? m) => m is null ? null : new
+    {
+        m.ContentType,
+        m.BodyFormat,
+        m.BodyByteCount,
+        hasBody = m.Body is not null,
+        m.BodyTruncated,
+        m.BodyRedacted,
+        m.DecodeError
+    };
+
+    private static object? Formatted(Capture.HttpMessage? m)
+    {
+        if (m?.Body is null)
+        {
+            return null;
+        }
+
+        return new
+        {
+            format = m.BodyFormat,
+            pretty = BodyFormatter.Pretty(m.Body, m.ContentType)
+        };
     }
 
     private static Func<Capture.Exchange, bool>? BuildFilter(string? q, int? status)
