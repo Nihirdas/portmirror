@@ -293,4 +293,74 @@ public class HttpMessageParserTests
 
         Assert.Equal((long)raw.Length, p.BytesSeen);
     }
+
+    // --- Regression: findings from the adversarial review of the parser ---
+
+    [Fact]
+    public void A_body_that_decompresses_past_the_cap_is_flagged_truncated()
+    {
+        // Compressed body sits under the 1 MB wire cap, but inflates past the 8 MB
+        // decompression cap. It must be reported cut-short, not silently complete.
+        var payload = new byte[9 * 1024 * 1024];
+        for (var i = 0; i < payload.Length; i++) { payload[i] = (byte)'a'; }
+
+        byte[] gz;
+        using (var ms = new MemoryStream())
+        {
+            using (var g = new GZipStream(ms, CompressionLevel.Optimal, leaveOpen: true))
+            {
+                g.Write(payload, 0, payload.Length);
+            }
+            gz = ms.ToArray();
+        }
+
+        Assert.True(gz.Length < 1024 * 1024, "compressed body must fit under the wire cap");
+
+        var head = B($"HTTP/1.1 200 OK\nContent-Encoding: gzip\nContent-Length: {gz.Length}\n\n");
+        var all = new byte[head.Length + gz.Length];
+        Buffer.BlockCopy(head, 0, all, 0, head.Length);
+        Buffer.BlockCopy(gz, 0, all, head.Length, gz.Length);
+
+        var m = Assert.Single(new HttpMessageParser(MessageKind.Response).Append(all));
+
+        Assert.True(m.BodyDecompressed);
+        Assert.True(m.BodyTruncated);                 // the fix: no longer silently complete
+        Assert.Equal(8 * 1024 * 1024, m.Body.Length);
+    }
+
+    [Fact]
+    public void A_1xx_interim_response_does_not_consume_the_head_no_body_flag()
+    {
+        // HEAD request: caller marks the next response as body-less. The server sends an
+        // interim 103 first. The flag must survive to the real 200, which advertises a
+        // Content-Length it will never send a body for.
+        var p = new HttpMessageParser(MessageKind.Response) { NextResponseHasNoBody = true };
+
+        var done = p.Append(B(
+            "HTTP/1.1 103 Early Hints\nLink: </style.css>; rel=preload\n\n" +
+            "HTTP/1.1 200 OK\nContent-Length: 500\n\n"));
+
+        Assert.Equal(2, done.Count);
+        Assert.Equal(103, done[0].StatusCode);
+        Assert.Equal(200, done[1].StatusCode);
+        Assert.Empty(done[1].Body);                   // the fix: 200 framed as body-less
+        Assert.False(p.HasPartialMessage);            // not stuck waiting for 500 phantom bytes
+    }
+
+    [Fact]
+    public void Chunked_trailers_cannot_grow_the_header_list_without_bound()
+    {
+        var p = new HttpMessageParser(MessageKind.Response, maxHeaderBytes: 1024);
+
+        var sb = new System.Text.StringBuilder("HTTP/1.1 200 OK\nTransfer-Encoding: chunked\n\n3\nabc\n0\n");
+        for (var i = 0; i < 200; i++) { sb.Append($"X-Pad-{i}: {new string('z', 40)}\n"); }
+        sb.Append("\n");
+
+        var done = p.Append(B(sb.ToString()));
+
+        var m = Assert.Single(done);
+        Assert.Equal("abc", Body(m));
+        Assert.True(m.Headers.Count < 200, $"trailer flood not capped: {m.Headers.Count} headers");
+    }
+
 }

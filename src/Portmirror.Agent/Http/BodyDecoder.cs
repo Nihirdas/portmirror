@@ -30,14 +30,22 @@ public static class BodyDecoder
 
         try
         {
-            message.Body = name switch
+            var (data, capped) = name switch
             {
                 "gzip" or "x-gzip" => Inflate(message.Body, raw: false),
                 "deflate" => Inflate(message.Body, raw: true),
                 _ => throw new NotSupportedException($"Content-Encoding '{name}'")
             };
 
+            message.Body = data;
             message.BodyDecompressed = true;
+
+            // The decompressed output hit the safety cap, so it is cut short — say so, rather
+            // than presenting a partial body as complete.
+            if (capped)
+            {
+                message.BodyTruncated = true;
+            }
         }
         catch (Exception ex)
         {
@@ -49,7 +57,7 @@ public static class BodyDecoder
         }
     }
 
-    private static byte[] Inflate(byte[] input, bool raw)
+    private static (byte[] Data, bool Capped) Inflate(byte[] input, bool raw)
     {
         using var source = new MemoryStream(input, writable: false);
         using Stream decompressor = raw
@@ -72,15 +80,15 @@ public static class BodyDecoder
 
             if (total > MaxDecompressedBytes)
             {
-                // Guard against a compression bomb: keep what fits and stop.
+                // Guard against a compression bomb: keep what fits, flag it, and stop.
                 output.Write(buffer, 0, read - (total - MaxDecompressedBytes));
-                break;
+                return (output.ToArray(), true);
             }
 
             output.Write(buffer, 0, read);
         }
 
-        return output.ToArray();
+        return (output.ToArray(), false);
     }
 
     /// <summary>

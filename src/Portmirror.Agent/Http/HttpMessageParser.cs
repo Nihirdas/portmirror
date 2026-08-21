@@ -293,6 +293,16 @@ public sealed class HttpMessageParser
                     return true;
                 }
 
+                // Trailers count against the same budget as headers; a flood of trailer lines
+                // must not grow the header list without bound. The body is already complete, so
+                // on overflow just finish the message with the trailers seen so far.
+                _headerBytes += line.Length + 2;
+                if (_headerBytes > _maxHeaderBytes)
+                {
+                    done.Add(Complete());
+                    return true;
+                }
+
                 AddHeader(line);
                 return true;
             }
@@ -418,7 +428,21 @@ public sealed class HttpMessageParser
         };
 
         BodyDecoder.Decode(message);
+
+        // A 1xx interim response (100 Continue, 103 Early Hints) carries no body and is
+        // followed by the real response. The caller's "this is the answer to a HEAD" flag
+        // applies to that final response, so it must survive the interim one's reset.
+        var carryHeadFlag = _kind == MessageKind.Response
+            && _status is >= 100 and < 200
+            && NextResponseHasNoBody;
+
         Reset();
+
+        if (carryHeadFlag)
+        {
+            NextResponseHasNoBody = true;
+        }
+
         return message;
     }
 

@@ -207,10 +207,6 @@ public sealed class TcpStreamAssembler
     {
         while (true)
         {
-            // Advancing _next can leave earlier buffered segments wholly behind it; clear them
-            // so they cannot strand or be mistaken for a future gap.
-            PurgeStale();
-
             if (_pending.TryGetValue(_next, out var exact))
             {
                 _pending.Remove(_next);
@@ -233,7 +229,7 @@ public sealed class TcpStreamAssembler
 
             if (overlapping is null)
             {
-                return;
+                break;
             }
 
             var segment = _pending[overlapping.Value];
@@ -246,6 +242,10 @@ public sealed class TcpStreamAssembler
             Array.Copy(segment, skip, tail, 0, tail.Length);
             Consume(tail, output);
         }
+
+        // Advancing the stream can leave earlier buffered segments wholly behind it. Clear them
+        // once, here, rather than on every loop pass, so a big gap-close stays O(n) not O(n^2).
+        PurgeStale();
     }
 
     /// <summary>
