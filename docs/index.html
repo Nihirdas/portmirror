@@ -47,6 +47,7 @@
   }
   .lede{color:var(--ink-dim); font-size:1.08rem; max-width:62ch}
   section{padding:88px 0; border-top:1px solid var(--line)}
+  section[id]{scroll-margin-top:70px}
   section.alt{background:var(--surface-2)}
   h2{font-size:clamp(1.7rem,3.6vw,2.4rem); margin-bottom:14px}
   h3{font-size:1.05rem; font-weight:700; letter-spacing:-.01em}
@@ -61,8 +62,19 @@
   .brand:hover{text-decoration:none}
   .glyph{width:22px; height:22px; flex:none}
   .nav-links{display:none; gap:24px; margin-left:auto; font-size:.9rem}
-  .nav-links a{color:var(--ink-dim)}
+  .nav-links a{color:var(--ink-dim); position:relative; padding:3px 0}
+  .nav-links a::after{
+    content:""; position:absolute; left:0; right:0; bottom:-3px; height:1px; background:var(--signal);
+    transform:scaleX(0); transform-origin:left; transition:transform .25s cubic-bezier(.22,.9,.28,1)
+  }
   .nav-links a:hover{color:var(--ink); text-decoration:none}
+  .nav-links a:hover::after{transform:scaleX(1)}
+  .nav-links a.active{color:var(--ink)}
+  .nav-links a.active::after{transform:scaleX(1)}
+  .progress{
+    position:absolute; left:0; top:0; width:100%; height:2px; z-index:41; pointer-events:none;
+    background:linear-gradient(90deg,var(--signal),var(--mirror)); transform:scaleX(0); transform-origin:left
+  }
   .nav-cta{margin-left:auto}
   @media (min-width:820px){ .nav-links{display:flex} .nav-cta{margin-left:0} }
 
@@ -70,11 +82,18 @@
   .btn{
     display:inline-flex; align-items:center; gap:.55em; font-family:var(--body); font-weight:600;
     font-size:.94rem; padding:.72em 1.25em; border-radius:8px; border:1px solid transparent;
-    cursor:pointer; transition:transform .16s ease, border-color .2s ease, background .2s ease, color .2s ease;
+    cursor:pointer; position:relative; overflow:hidden;
+    transition:transform .16s ease, border-color .2s ease, background .2s ease, color .2s ease, box-shadow .25s ease;
   }
   .btn:hover{text-decoration:none; transform:translateY(-1px)}
   .btn-primary{background:var(--signal); color:#04252A; border-color:var(--signal)}
-  .btn-primary:hover{background:#5BE3F1}
+  .btn-primary::after{
+    content:""; position:absolute; top:0; bottom:0; left:0; width:45%; pointer-events:none;
+    background:linear-gradient(100deg,transparent,rgba(255,255,255,.5),transparent);
+    transform:translateX(-130%) skewX(-18deg); transition:transform .55s ease;
+  }
+  .btn-primary:hover{background:#5BE3F1; box-shadow:0 8px 26px -10px rgba(53,214,231,.6)}
+  .btn-primary:hover::after{transform:translateX(320%) skewX(-18deg)}
   .btn-ghost{border-color:var(--line-bright); color:var(--ink); background:transparent}
   .btn-ghost:hover{border-color:var(--signal); color:var(--signal)}
   .btn-sm{padding:.5em .9em; font-size:.85rem}
@@ -158,10 +177,16 @@
     font-family:var(--mono); font-size:.68rem; letter-spacing:.18em; text-transform:uppercase; color:var(--signal-deep)
   }
   .reflection{
-    height:120px; margin-top:2px; border-radius:0 0 12px 12px;
+    height:120px; margin-top:2px; border-radius:0 0 12px 12px; position:relative; overflow:hidden;
     background:linear-gradient(180deg, rgba(53,214,231,.09), rgba(242,166,90,.05) 38%, transparent 88%);
     -webkit-mask-image:linear-gradient(180deg,#000,transparent); mask-image:linear-gradient(180deg,#000,transparent);
   }
+  .reflection::after{
+    content:""; position:absolute; top:0; bottom:0; left:-55%; width:45%; pointer-events:none;
+    background:linear-gradient(100deg,transparent,rgba(53,214,231,.07),transparent); transform:skewX(-14deg);
+    animation:sweep 9s ease-in-out infinite;
+  }
+  @keyframes sweep{0%,55%{transform:translateX(0) skewX(-14deg)} 90%,100%{transform:translateX(400%) skewX(-14deg)}}
   .reflection-rows{
     font-family:var(--mono); font-size:.8rem; color:var(--mirror); opacity:.3;
     transform:scaleY(-1); padding:9px 16px 0; line-height:2.35;
@@ -175,9 +200,16 @@
   @media (min-width:760px){ .three{grid-template-columns:repeat(3,1fr)} }
   .card{
     background:var(--surface); border:1px solid var(--line); border-radius:10px; padding:24px;
+    position:relative; overflow:hidden;
     transition:border-color .2s ease, transform .2s ease;
   }
+  .card::before{
+    content:""; position:absolute; left:0; right:0; top:0; height:1px; pointer-events:none;
+    background:linear-gradient(90deg,transparent,rgba(53,214,231,.55),transparent);
+    opacity:0; transition:opacity .3s ease;
+  }
   .card:hover{border-color:var(--line-bright); transform:translateY(-2px)}
+  .card:hover::before{opacity:1}
   .card p{color:var(--ink-dim); margin:.7em 0 0; font-size:.94rem}
   .card .tag{
     font-family:var(--mono); font-size:.68rem; letter-spacing:.13em; text-transform:uppercase;
@@ -197,6 +229,7 @@
   }
   .notice p{margin:0; font-size:.93rem; color:var(--ink-dim)}
   .notice p + p{margin-top:9px}
+  .notice .when .days{display:block; margin-top:9px; font-size:.64rem; letter-spacing:.14em; color:var(--mirror); opacity:.75}
   .notice a{color:var(--mirror)}
   @media (max-width:640px){
     .notice{grid-template-columns:1fr}
@@ -226,6 +259,8 @@
     font-family:var(--mono); font-size:.7rem; letter-spacing:.1em; text-transform:uppercase;
     color:var(--ink-faint); font-weight:500; background:var(--surface-2)
   }
+  table.tiers tbody tr{transition:background-color .2s ease}
+  table.tiers tbody tr:hover{background:rgba(53,214,231,.045)}
   table.tiers tbody tr:last-child td{border-bottom:0}
   table.tiers td strong{color:var(--ink); font-weight:600}
   table.tiers td{color:var(--ink-dim)}
@@ -247,14 +282,16 @@
     border:1px solid var(--line-bright); background:var(--surface); color:var(--ink-faint); z-index:1
   }
   .phase.done .num{border-color:var(--signal); color:var(--signal); box-shadow:0 0 0 4px rgba(53,214,231,.1)}
-  .phase.now .num{border-color:var(--mirror); color:var(--mirror); box-shadow:0 0 0 4px rgba(242,166,90,.1)}
+  .phase.now .num{border-color:var(--mirror); color:var(--mirror); box-shadow:0 0 0 4px rgba(242,166,90,.1); animation:ringpulse 2.4s ease-in-out infinite}
+  @keyframes ringpulse{0%,100%{box-shadow:0 0 0 4px rgba(242,166,90,.1)} 50%{box-shadow:0 0 0 8px rgba(242,166,90,.18)}}
   .phase-head{display:flex; flex-wrap:wrap; align-items:center; gap:12px; margin-bottom:8px}
   .chip{
     font-family:var(--mono); font-size:.66rem; letter-spacing:.11em; text-transform:uppercase;
     padding:.3em .65em; border-radius:4px; border:1px solid var(--line-bright); color:var(--ink-faint)
   }
   .chip.done{color:var(--signal); border-color:rgba(53,214,231,.4); background:rgba(53,214,231,.07)}
-  .chip.now{color:var(--mirror); border-color:rgba(242,166,90,.4); background:rgba(242,166,90,.07)}
+  .chip.now{color:var(--mirror); border-color:rgba(242,166,90,.4); background:rgba(242,166,90,.07); animation:breathe 3s ease-in-out infinite}
+  @keyframes breathe{0%,100%{opacity:1} 50%{opacity:.55}}
   .phase p{color:var(--ink-dim); margin:0; font-size:.95rem; max-width:66ch}
   .phase ul{margin:12px 0 0; padding-left:0; list-style:none; display:grid; gap:7px}
   .phase ul li{font-size:.9rem; color:var(--ink-faint); display:flex; gap:10px}
@@ -275,6 +312,16 @@
     font-family:var(--mono); font-size:.82rem; background:var(--surface-2); border:1px solid var(--line);
     border-radius:9px; padding:16px 18px; overflow-x:auto; color:var(--ink-dim); margin:18px 0 0; line-height:1.7
   }
+  .prewrap{position:relative}
+  .copybtn{
+    position:absolute; top:9px; right:9px; z-index:1;
+    font:500 .66rem/1 var(--mono); letter-spacing:.1em; text-transform:uppercase;
+    color:var(--ink-faint); background:var(--surface); border:1px solid var(--line-bright);
+    border-radius:6px; padding:.6em .85em; cursor:pointer;
+    transition:color .2s ease, border-color .2s ease;
+  }
+  .copybtn:hover{color:var(--signal); border-color:var(--signal)}
+  .copybtn.ok{color:var(--ok); border-color:rgba(78,216,138,.5)}
   pre .c{color:var(--ink-faint)}
   .rules{list-style:none; padding:0; margin:22px 0 0; display:grid; gap:9px}
   .rules li{font-size:.93rem; color:var(--ink-dim); display:flex; gap:11px}
@@ -283,23 +330,48 @@
   /* ---------- footer ---------- */
   footer{border-top:1px solid var(--line); padding:46px 0 60px; background:var(--surface-2)}
   .foot{display:flex; flex-wrap:wrap; gap:18px 32px; align-items:center; font-size:.86rem; color:var(--ink-faint)}
-  .foot a{color:var(--ink-dim)}
+  .foot a,.src a{
+    color:var(--ink-dim); text-decoration:none;
+    background:linear-gradient(currentColor,currentColor) no-repeat left bottom / 0% 1px;
+    transition:background-size .3s ease, color .2s ease;
+  }
+  .foot a:hover,.src a:hover{color:var(--ink); text-decoration:none; background-size:100% 1px}
   .foot .sep{margin-left:auto}
   .disclaimer{margin-top:22px; font-size:.78rem; color:var(--ink-faint); max-width:70ch; line-height:1.7}
 
   .reveal{opacity:0; transform:translateY(14px); transition:opacity .55s ease, transform .55s ease}
   .reveal.seen{opacity:1; transform:none}
+  /* children of revealed sections stagger in behind their parent */
+  .reveal .two>*,.reveal .three>*,.reveal .help>*,.reveal .phases>.phase{
+    opacity:0; transform:translateY(12px);
+    transition:opacity .5s cubic-bezier(.22,.9,.28,1), transform .5s cubic-bezier(.22,.9,.28,1);
+  }
+  .reveal.seen .two>*,.reveal.seen .three>*,.reveal.seen .help>*,.reveal.seen .phases>.phase{opacity:1; transform:none}
+  .reveal.seen .two>*:nth-child(2),.reveal.seen .three>*:nth-child(2),.reveal.seen .help>*:nth-child(2),.reveal.seen .phases>.phase:nth-child(2){transition-delay:.08s}
+  .reveal.seen .three>*:nth-child(3),.reveal.seen .help>*:nth-child(3),.reveal.seen .phases>.phase:nth-child(3){transition-delay:.16s}
+  .reveal.seen .help>*:nth-child(4),.reveal.seen .phases>.phase:nth-child(4){transition-delay:.24s}
+  .reveal.seen .help>*:nth-child(5),.reveal.seen .phases>.phase:nth-child(5){transition-delay:.32s}
+  .reveal.seen .help>*:nth-child(6){transition-delay:.4s}
+  /* the roadmap connector draws in with its section */
+  .reveal .phase:not(:last-child)::before{transform:scaleY(0); transform-origin:top; transition:transform .9s cubic-bezier(.22,.9,.28,1) .35s}
+  .reveal.seen .phase:not(:last-child)::before{transform:scaleY(1)}
+
+  /* hero entrance */
+  .fx{opacity:0; animation:rise .6s cubic-bezier(.22,.9,.28,1) both; animation-delay:var(--d,0s)}
+  @keyframes rise{from{opacity:0; transform:translateY(14px)} to{opacity:1; transform:none}}
 
   @media (prefers-reduced-motion:reduce){
-    *,*::before,*::after{animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important}
+    *,*::before,*::after{animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important; transition-delay:0s !important; animation-delay:0s !important}
     html{scroll-behavior:auto}
-    .reveal{opacity:1; transform:none}
+    .reveal,.reveal .two>*,.reveal .three>*,.reveal .help>*,.reveal .phases>.phase{opacity:1; transform:none}
+    .fx{opacity:1; animation:none; transform:none}
   }
 </style>
 </head>
 <body>
 
 <nav>
+  <div class="progress" id="progress" aria-hidden="true"></div>
   <div class="wrap nav-in">
     <a class="brand" href="#top">
       <svg class="glyph" viewBox="0 0 32 32" aria-hidden="true">
@@ -324,18 +396,18 @@
 <header class="hero" id="top">
   <div class="wrap">
     <div class="rail">
-      <span class="status"><span class="beacon"></span> <b>Work in progress</b> · v0.1.0 · the agent captures, the rest is roadmap</span>
-      <h1>See the traffic on your server. <em>No proxy, no subscription.</em></h1>
-      <p class="lede">
+      <span class="status fx"><span class="beacon"></span> <b>Work in progress</b> · v0.1.0 · the agent captures, the rest is roadmap</span>
+      <h1 class="fx" style="--d:.08s">See the traffic on your server. <em>No proxy, no subscription.</em></h1>
+      <p class="lede fx" style="--d:.16s">
         Portmirror is a small, open-source HTTP capture agent for Windows and IIS. It watches requests
         arrive without inserting itself into the request path — so capture starts and stops underneath a
         running application, and you never recycle an application pool to see what happened.
       </p>
-      <div class="hero-cta">
+      <div class="hero-cta fx" style="--d:.24s">
         <a class="btn btn-primary" href="https://github.com/Nihirdas/portmirror">View the source</a>
         <a class="btn btn-ghost" href="#contribute">Help build it</a>
       </div>
-      <div class="hero-meta">
+      <div class="hero-meta fx" style="--d:.32s">
         <span>MIT licensed, commercial use included</span>
         <span>Runs on your machine</span>
         <span>No account, no sign-in</span>
@@ -344,7 +416,7 @@
     </div>
   </div>
 
-  <div class="wrap console-stage">
+  <div class="wrap console-stage fx" style="--d:.4s">
     <div class="console">
       <div class="console-bar">
         <span class="live"><i></i> capturing</span>
@@ -841,6 +913,70 @@ dotnet publish src/Portmirror.Agent/Portmirror.Agent.csproj -c Release -r win-x6
         });
       }, { rootMargin: '-60px 0px -10% 0px' });
       targets.forEach(function (el) { io.observe(el); });
+    }
+
+    // Scrollspy: mark the nav link for the section in view.
+    var navLinks = {};
+    document.querySelectorAll('.nav-links a[href^="#"]').forEach(function (a) {
+      navLinks[a.getAttribute('href').slice(1)] = a;
+    });
+    if ('IntersectionObserver' in window) {
+      var spy = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (!e.isIntersecting) return;
+          for (var k in navLinks) navLinks[k].classList.remove('active');
+          if (navLinks[e.target.id]) navLinks[e.target.id].classList.add('active');
+        });
+      }, { rootMargin: '-35% 0px -55% 0px' });
+      document.querySelectorAll('section[id]').forEach(function (s) {
+        if (navLinks[s.id]) spy.observe(s);
+      });
+    }
+
+    // Scroll progress along the top edge of the nav.
+    var prog = document.getElementById('progress');
+    var ticking = false;
+    function paintProgress() {
+      var h = document.documentElement;
+      var max = h.scrollHeight - h.clientHeight;
+      prog.style.transform = 'scaleX(' + (max > 0 ? h.scrollTop / max : 0) + ')';
+      ticking = false;
+    }
+    window.addEventListener('scroll', function () {
+      if (!ticking) { requestAnimationFrame(paintProgress); ticking = true; }
+    }, { passive: true });
+    paintProgress();
+
+    // Days remaining until the licence change, on the visitor's own clock.
+    var when = document.querySelector('.notice .when');
+    if (when) {
+      var days = Math.ceil((new Date(2026, 8, 17) - new Date()) / 864e5);
+      var d = document.createElement('span');
+      d.className = 'days';
+      d.textContent = days > 1 ? days + ' days away' : days === 1 ? 'tomorrow' : days === 0 ? 'today' : 'now in effect';
+      when.appendChild(d);
+    }
+
+    // Copy button on the build snippet.
+    var pre = document.querySelector('#contribute pre');
+    if (pre && navigator.clipboard) {
+      var wrapEl = document.createElement('div');
+      wrapEl.className = 'prewrap';
+      pre.parentNode.insertBefore(wrapEl, pre);
+      wrapEl.appendChild(pre);
+      var cb = document.createElement('button');
+      cb.type = 'button';
+      cb.className = 'copybtn';
+      cb.textContent = 'copy';
+      cb.setAttribute('aria-label', 'Copy build commands');
+      cb.addEventListener('click', function () {
+        navigator.clipboard.writeText(pre.innerText).then(function () {
+          cb.textContent = 'copied';
+          cb.classList.add('ok');
+          setTimeout(function () { cb.textContent = 'copy'; cb.classList.remove('ok'); }, 1500);
+        });
+      });
+      wrapEl.appendChild(cb);
     }
   })();
 </script>
