@@ -4,6 +4,8 @@ A lightweight HTTP capture agent for Windows and IIS. It shows you the requests 
 flowing through a server without a proxy, without a desktop GUI, and **without recycling the
 application pool**.
 
+**[nihirdas.github.io/portmirror](https://nihirdas.github.io/portmirror/)** — the idea, the roadmap, and where to help.
+
 > Status: early. Today's build captures inbound request metadata. Bodies and response
 > overriding are on the roadmap below.
 
