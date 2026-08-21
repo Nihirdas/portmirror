@@ -141,7 +141,7 @@
   .console-bar .spacer{margin-left:auto}
   .tail{--rowh:34px; --rows:8; font-family:var(--mono); font-size:.8rem; font-variant-numeric:tabular-nums}
   .trow{
-    display:grid; grid-template-columns:78px 54px 46px 62px minmax(0,1fr) 96px;
+    display:grid; grid-template-columns:96px 52px 44px minmax(0,1fr) 58px 116px; column-gap:18px;
     align-items:center; height:var(--rowh); padding:0 16px; overflow:hidden;
     border-bottom:1px solid rgba(29,42,56,.55); color:var(--ink-dim); white-space:nowrap;
   }
@@ -165,7 +165,7 @@
   }
   @media (max-width:640px){
     .tail{--rows:7}
-    .trow{grid-template-columns:70px 48px 42px minmax(0,1fr); padding:0 12px}
+    .trow{grid-template-columns:88px 46px 38px minmax(0,1fr); column-gap:12px; padding:0 12px}
     .trow .cl,.thead .cl,.trow .ms,.thead .ms{display:none}
   }
   .mirror-plane{position:relative; height:0}
@@ -425,7 +425,7 @@
       </div>
       <div class="tail">
         <div class="trow thead" aria-hidden="true">
-          <span>time</span><span>verb</span><span>code</span><span class="ms">ms</span><span>path</span><span class="cl">client</span>
+          <span>time</span><span>method</span><span>code</span><span>path</span><span class="ms">ms</span><span class="cl">client</span>
         </div>
         <div class="rows" id="rows" role="log" aria-label="Captured requests" aria-live="off"></div>
       </div>
@@ -839,7 +839,7 @@ dotnet publish src/Portmirror.Agent/Portmirror.Agent.csproj -c Release -r win-x6
       ['GET',  503, [900,3000],'/api/reports/nightly'],
       ['GET',  200, [1,4],    '/healthz']
     ];
-    var CLIENTS = ['10.0.0.24','10.0.0.31','10.0.0.9','10.0.0.55','10.0.0.7'];
+    var CLIENTS = ['203.0.113.42','198.51.100.17','192.0.2.88','203.0.113.174','198.51.100.129','192.0.2.65','203.0.113.9'];
     var MAX = 9;
 
     var rows = document.getElementById('rows');
@@ -860,8 +860,8 @@ dotnet publish src/Portmirror.Agent/Portmirror.Agent.csproj -c Release -r win-x6
         '<span>' + stamp(when) + '</span>' +
         '<span class="v">' + entry[0] + '</span>' +
         '<span class="s' + String(entry[1])[0] + '">' + entry[1] + '</span>' +
-        '<span class="ms">' + (ms < 10 ? ms.toFixed(2) : Math.round(ms)) + '</span>' +
         '<span class="u">' + entry[3] + '</span>' +
+        '<span class="ms">' + (ms < 10 ? ms.toFixed(2) : Math.round(ms)) + '</span>' +
         '<span class="cl">' + pick(CLIENTS) + '</span>';
       return el;
     }
@@ -870,7 +870,7 @@ dotnet publish src/Portmirror.Agent/Portmirror.Agent.csproj -c Release -r win-x6
       var out = [];
       for (var i = 0; i < 4 && i < rows.children.length; i++) {
         var c = rows.children[i].children;
-        out.push(c[1].textContent + '  ' + c[2].textContent + '  ' + c[4].textContent);
+        out.push(c[1].textContent + '  ' + c[2].textContent + '  ' + c[3].textContent);
       }
       refl.textContent = out.join('\n');
     }
