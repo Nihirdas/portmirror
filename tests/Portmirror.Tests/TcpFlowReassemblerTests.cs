@@ -1,0 +1,218 @@
+using System.Net;
+using System.Text;
+using Portmirror.Agent.Capture;
+using Portmirror.Agent.Pcap;
+using Portmirror.Agent.Redaction;
+using Xunit;
+
+namespace Portmirror.Tests;
+
+public class TcpFlowReassemblerTests
+{
+    private const string Client = "10.0.0.1";
+    private const string Server = "10.0.0.2";
+
+    private static TcpSegment Seg(
+        string sip, int sp, string dip, int dp, uint seq, string payload,
+        bool syn = false, bool ack = false, bool fin = false, bool rst = false) => new()
+    {
+        Source = new Endpoint(IPAddress.Parse(sip), sp),
+        Destination = new Endpoint(IPAddress.Parse(dip), dp),
+        Sequence = seq,
+        Syn = syn, Ack = ack, Fin = fin, Rst = rst,
+        Payload = Encoding.ASCII.GetBytes(payload)
+    };
+
+    private static TcpFlowReassembler New() =>
+        new(new Redactor(true), serverPorts: new[] { 80 });
+
+    private static string? Body(HttpMessage? m) => m?.Body;
+
+    [Fact]
+    public void Pairs_a_request_with_its_response()
+    {
+        var r = New();
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1000, "", syn: true)));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2000, "", syn: true, ack: true)));
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1001, "GET /orders HTTP/1.1\r\nHost: h\r\n\r\n")));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2001, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nhi")));
+
+        var ex = Assert.Single(got);
+        Assert.Equal("GET", ex.Verb);
+        Assert.Equal("/orders", ex.Url);
+        Assert.Equal(200, ex.StatusCode);
+        Assert.Equal(CaptureTier.PacketCapture, ex.Tier);
+        Assert.Equal(Client, ex.ClientIp);
+        Assert.Equal("hi", Body(ex.Response));
+        Assert.False(ex.Partial);
+    }
+
+    [Fact]
+    public void Reassembles_a_request_whose_segments_arrive_out_of_order()
+    {
+        var r = New();
+        const string req = "POST /pay HTTP/1.1\r\nContent-Length: 5\r\n\r\nmoney";
+        var half = req.Length / 2;
+        var got = new List<Exchange>();
+
+        // Second half first, then the first half.
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, (uint)(1000 + half), req[half..])));
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1000, req[..half])));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2000, "HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n")));
+
+        var ex = Assert.Single(got);
+        Assert.Equal("POST", ex.Verb);
+        Assert.Equal("/pay", ex.Url);
+        Assert.Equal(201, ex.StatusCode);
+        Assert.Equal("money", Body(ex.Request));
+    }
+
+    [Fact]
+    public void Determines_direction_from_a_server_port_hint_without_a_syn()
+    {
+        var r = New();   // serverPorts = {80}
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1, "GET /a HTTP/1.1\r\n\r\n")));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 1, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nx")));
+
+        var ex = Assert.Single(got);
+        Assert.Equal("/a", ex.Url);
+        Assert.Equal(Client, ex.ClientIp);
+    }
+
+    [Fact]
+    public void Falls_back_to_treating_the_first_destination_as_the_server()
+    {
+        var r = new TcpFlowReassembler(new Redactor(true));   // no server-port hint
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 9999, 1, "GET /b HTTP/1.1\r\n\r\n")));
+        got.AddRange(r.Accept(Seg(Server, 9999, Client, 5000, 1, "HTTP/1.1 204 No Content\r\n\r\n")));
+
+        var ex = Assert.Single(got);
+        Assert.Equal("/b", ex.Url);
+        Assert.Equal(204, ex.StatusCode);
+        Assert.Equal(Client, ex.ClientIp);
+    }
+
+    [Fact]
+    public void Pairs_two_transactions_on_a_keep_alive_connection_in_order()
+    {
+        var r = New();
+        const string req1 = "GET /1 HTTP/1.1\r\nHost: h\r\n\r\n";
+        const string req2 = "GET /2 HTTP/1.1\r\nHost: h\r\n\r\n";
+        const string res1 = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nA";
+        const string res2 = "HTTP/1.1 404 Not Found\r\nContent-Length: 1\r\n\r\nB";
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1, req1)));
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, (uint)(1 + req1.Length), req2)));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 1, res1)));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, (uint)(1 + res1.Length), res2)));
+
+        Assert.Equal(2, got.Count);
+        Assert.Equal("/1", got[0].Url);
+        Assert.Equal(200, got[0].StatusCode);
+        Assert.Equal("A", Body(got[0].Response));
+        Assert.Equal("/2", got[1].Url);
+        Assert.Equal(404, got[1].StatusCode);
+        Assert.Equal("B", Body(got[1].Response));
+    }
+
+    [Fact]
+    public void A_head_request_frames_its_response_as_body_less()
+    {
+        var r = New();
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1, "HEAD /page HTTP/1.1\r\nHost: h\r\n\r\n")));
+        // Advertises a length it will never send a body for, then the next response follows.
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 1, "HTTP/1.1 200 OK\r\nContent-Length: 1234\r\n\r\n")));
+
+        var ex = Assert.Single(got);
+        Assert.Equal("HEAD", ex.Verb);
+        Assert.Equal(200, ex.StatusCode);
+        Assert.Null(Body(ex.Response));   // empty body maps to null, not a phantom 1234-byte read
+    }
+
+    [Fact]
+    public void A_request_with_no_response_surfaces_as_partial_on_close()
+    {
+        var r = New();
+        var key = FlowKey.For(new Endpoint(IPAddress.Parse(Client), 5000), new Endpoint(IPAddress.Parse(Server), 80));
+
+        Assert.Empty(r.Accept(Seg(Client, 5000, Server, 80, 1, "GET /lonely HTTP/1.1\r\nHost: h\r\n\r\n")));
+
+        var closed = r.CloseFlow(key);
+
+        var ex = Assert.Single(closed);
+        Assert.Equal("/lonely", ex.Url);
+        Assert.True(ex.Partial);
+        Assert.NotNull(ex.Request);
+        Assert.Null(ex.Response);
+    }
+
+    [Fact]
+    public void A_reset_closes_the_flow_and_flushes()
+    {
+        var r = New();
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1, "GET /x HTTP/1.1\r\nHost: h\r\n\r\n")));
+        Assert.Equal(1, r.FlowCount);
+
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 1, "", rst: true)));
+
+        Assert.Equal(0, r.FlowCount);   // flow torn down
+        var ex = Assert.Single(got);
+        Assert.True(ex.Partial);        // request never answered
+        Assert.Equal("/x", ex.Url);
+    }
+
+    [Fact]
+    public void Redacts_a_card_number_in_the_request_url()
+    {
+        var r = New();
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1, "GET /pay?pan=4111111111111111 HTTP/1.1\r\n\r\n")));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 1, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")));
+
+        var ex = Assert.Single(got);
+        Assert.DoesNotContain("4111111111111111", ex.Url);
+    }
+
+    [Fact]
+    public void End_to_end_from_a_pcapng_file_to_a_paired_exchange()
+    {
+        var reqFrame = PacketBuilders.Ethernet(0x0800,
+            PacketBuilders.Ipv4Tcp(Client, 5000, Server, 80, 1,
+                Encoding.ASCII.GetBytes("GET /p HTTP/1.1\r\nHost: h\r\n\r\n")));
+        var resFrame = PacketBuilders.Ethernet(0x0800,
+            PacketBuilders.Ipv4Tcp(Server, 80, Client, 5000, 1,
+                Encoding.ASCII.GetBytes("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 3\r\n\r\nabc")));
+
+        var file = PacketBuilders.Pcapng(PacketParser.LinkTypeEthernet, new[] { reqFrame, resFrame });
+
+        var r = New();
+        var got = new List<Exchange>();
+        foreach (var packet in PcapngReader.Read(file))
+        {
+            var seg = PacketParser.Parse(packet.LinkType, packet.Data);
+            if (seg is not null)
+            {
+                got.AddRange(r.Accept(seg));
+            }
+        }
+
+        var ex = Assert.Single(got);
+        Assert.Equal("GET", ex.Verb);
+        Assert.Equal("/p", ex.Url);
+        Assert.Equal(200, ex.StatusCode);
+        Assert.Equal("abc", Body(ex.Response));
+        Assert.Equal("text/plain", ex.Response!.ContentType);
+    }
+}
