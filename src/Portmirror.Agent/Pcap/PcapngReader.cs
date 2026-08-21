@@ -51,22 +51,26 @@ public static class PcapngReader
             var totalLength = ReadU32(file, pos + 4, littleEndian);
 
             // A block is at least its 12 bytes of framing and is 32-bit aligned; anything else
-            // is a corrupt file, so stop rather than loop forever.
-            if (totalLength < 12 || totalLength % 4 != 0 || pos + (int)totalLength > file.Length)
+            // is a corrupt file, so stop rather than loop forever. The comparison is done in
+            // long so a length with the high bit set cannot cast to a negative int and slip past.
+            if (totalLength < 12 || totalLength % 4 != 0 || (long)pos + totalLength > file.Length)
             {
                 break;
             }
 
+            // Safe now: totalLength <= file.Length - pos, so it fits in a positive int.
+            var blockLength = (int)totalLength;
             var bodyStart = pos + 8;
-            var bodyEnd = pos + (int)totalLength - 4;   // trailing redundant length
+            var bodyEnd = pos + blockLength - 4;   // trailing redundant length
 
             switch (blockType)
             {
                 case BlockInterfaceDescription:
-                    if (bodyEnd - bodyStart >= 2)
-                    {
-                        interfaces.Add(ReadU16(file, bodyStart, littleEndian));
-                    }
+                    // pcapng assigns interface ids by declaration order, so a malformed IDB must
+                    // still occupy a slot or every later packet's link type shifts.
+                    interfaces.Add(bodyEnd - bodyStart >= 2
+                        ? ReadU16(file, bodyStart, littleEndian)
+                        : PacketParser.LinkTypeEthernet);
                     break;
 
                 case BlockEnhancedPacket:
@@ -78,7 +82,7 @@ public static class PcapngReader
                     break;
             }
 
-            pos += (int)totalLength;
+            pos += blockLength;
         }
 
         return packets;
@@ -95,10 +99,12 @@ public static class PcapngReader
         var interfaceId = (int)ReadU32(file, bodyStart, le);
         var tsHigh = ReadU32(file, bodyStart + 4, le);
         var tsLow = ReadU32(file, bodyStart + 8, le);
-        var captured = (int)ReadU32(file, bodyStart + 12, le);
+        var captured = ReadU32(file, bodyStart + 12, le);   // uint; may be attacker-controlled
 
         var dataStart = bodyStart + 20;
-        if (captured < 0 || dataStart + captured > bodyEnd)
+
+        // Compare in long: a large captured value must not overflow int and slip past the bound.
+        if ((long)dataStart + captured > bodyEnd)
         {
             return;
         }
@@ -106,7 +112,7 @@ public static class PcapngReader
         packets.Add(new CapturedPacket
         {
             LinkType = LinkTypeFor(interfaces, interfaceId),
-            Data = file.AsSpan(dataStart, captured).ToArray(),
+            Data = file.AsSpan(dataStart, (int)captured).ToArray(),
             TimestampTicks = (long)(((ulong)tsHigh << 32) | tsLow)
         });
     }
@@ -119,13 +125,13 @@ public static class PcapngReader
             return;
         }
 
-        var originalLength = (int)ReadU32(file, bodyStart, le);
+        var originalLength = ReadU32(file, bodyStart, le);   // uint
         var dataStart = bodyStart + 4;
 
         // A simple packet block has no captured-length field of its own; it is bounded by the
-        // block, and uses interface 0.
+        // block, and uses interface 0. Cap in long so a huge length cannot over-read.
         var available = bodyEnd - dataStart;
-        var length = Math.Min(originalLength, available);
+        var length = (int)Math.Min(originalLength, (uint)Math.Max(0, available));
         if (length <= 0)
         {
             return;
