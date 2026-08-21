@@ -73,6 +73,18 @@ public sealed class HttpMessageParser
     /// </summary>
     public bool NextResponseHasNoBody { get; set; }
 
+    /// <summary>
+    /// One entry per request seen on this connection, in order, saying whether that request was
+    /// a HEAD. Each final response consumes the oldest, so pipelined requests frame their
+    /// responses correctly even when some are HEAD and some are not. Populated by the feed via
+    /// <see cref="ExpectResponse"/>; unused when a caller drives <see cref="NextResponseHasNoBody"/>
+    /// directly.
+    /// </summary>
+    private readonly Queue<bool> _headExpectations = new();
+
+    /// <summary>Records, in request order, whether a request was a HEAD (its response has no body).</summary>
+    public void ExpectResponse(bool headRequest) => _headExpectations.Enqueue(headRequest);
+
     public IReadOnlyList<ParsedMessage> Append(byte[] data) =>
         Append(data ?? Array.Empty<byte>(), 0, data?.Length ?? 0);
 
@@ -401,13 +413,20 @@ public sealed class HttpMessageParser
 
     private bool ResponseCannotHaveBody()
     {
-        if (NextResponseHasNoBody)
+        var code = _status ?? 0;
+
+        // A 1xx interim response never carries a body and is not the answer to the pending
+        // request, so it must not consume a HEAD expectation.
+        if (code >= 100 && code < 200)
         {
             return true;
         }
 
-        var code = _status ?? 0;
-        return code is 204 or 304 || (code >= 100 && code < 200);
+        // This is the final response: it answers the oldest outstanding request, so consume that
+        // request's HEAD marker (if the feed queued one) in order.
+        var headExpected = _headExpectations.Count > 0 && _headExpectations.Dequeue();
+
+        return NextResponseHasNoBody || headExpected || code is 204 or 304;
     }
 
     private ParsedMessage Complete()

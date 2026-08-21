@@ -32,7 +32,12 @@ public sealed class TcpFlowReassembler
         public bool ClientFinished;
         public bool ServerFinished;
         public int PairIndex;
+        public uint? ClientSyn;   // ISN of the client's SYN, to tell a reused 4-tuple from a retransmit
     }
+
+    // A backlog this deep means one side of a connection is missing (loss or mid-stream capture),
+    // so the oldest unmatched message is flushed as partial rather than held forever.
+    private const int MaxQueuedPerDirection = 512;
 
     private readonly Redactor _redactor;
     private readonly HashSet<int> _serverPorts;
@@ -55,22 +60,31 @@ public sealed class TcpFlowReassembler
         ArgumentNullException.ThrowIfNull(segment);
 
         var key = FlowKey.For(segment.Source, segment.Destination);
+        var emitted = new List<Exchange>();
 
         if (!_flows.TryGetValue(key, out var flow))
         {
-            flow = new Flow();
-            _flows[key] = flow;
-            _order.AddLast(key);
-            EvictIfNeeded();
+            flow = CreateFlow(key);
+        }
+
+        // A SYN (without ACK) on an already-established flow is either a retransmit of the same
+        // handshake or a new connection reusing the 4-tuple. If the ISN differs it is a new
+        // connection: flush the old flow's partials and start fresh, or its data would be seeded
+        // against the previous connection's sequence space and silently dropped.
+        if (segment.Syn && !segment.Ack && flow.DirectionKnown
+            && (flow.ClientSyn is null || flow.ClientSyn.Value != segment.Sequence))
+        {
+            CloseInto(flow, key, emitted);
+            flow = CreateFlow(key);
         }
 
         EstablishDirection(flow, segment);
 
         var isClientToServer = segment.Source.Equals(flow.Client);
-        var emitted = new List<Exchange>();
 
         RouteSegment(flow, segment, isClientToServer);
         Pair(flow, key, emitted);
+        EnforceQueueBounds(flow, key, emitted);
 
         // A reset tears the connection down; a graceful close needs both FINs.
         if (segment.Rst)
@@ -127,6 +141,7 @@ public sealed class TcpFlowReassembler
         {
             flow.Client = seg.Source;
             flow.Server = seg.Destination;
+            flow.ClientSyn = seg.Sequence;
         }
         else if (seg.Syn && seg.Ack)
         {
@@ -183,12 +198,10 @@ public sealed class TcpFlowReassembler
         {
             flow.Requests.Enqueue(message);
 
-            // A HEAD response carries no body however it is framed; tell the response parser so
-            // it does not read the advertised Content-Length off the following response.
-            if (string.Equals(message.Method, "HEAD", StringComparison.OrdinalIgnoreCase))
-            {
-                flow.ResponseParser.NextResponseHasNoBody = true;
-            }
+            // Record, in request order, whether this one was a HEAD. The response parser consumes
+            // these in the same order, so pipelined mixes of HEAD and non-HEAD frame correctly.
+            var isHead = string.Equals(message.Method, "HEAD", StringComparison.OrdinalIgnoreCase);
+            flow.ResponseParser.ExpectResponse(isHead);
         }
     }
 
@@ -258,6 +271,33 @@ public sealed class TcpFlowReassembler
             Request = request is null ? null : MessageMapper.ToHttpMessage(request, _redactor),
             Response = response is null ? null : MessageMapper.ToHttpMessage(response, _redactor)
         };
+    }
+
+    private Flow CreateFlow(FlowKey key)
+    {
+        var flow = new Flow();
+        _flows[key] = flow;
+        _order.AddLast(key);
+        EvictIfNeeded();
+        return flow;
+    }
+
+    /// <summary>
+    /// Keeps the per-flow queues bounded. After pairing, at most one queue holds unmatched
+    /// messages (the other is empty); flush its oldest as partial once the backlog is too deep,
+    /// which also stops a stranded response from later mispairing with an unrelated request.
+    /// </summary>
+    private void EnforceQueueBounds(Flow flow, FlowKey key, List<Exchange> emitted)
+    {
+        while (flow.Requests.Count > MaxQueuedPerDirection)
+        {
+            emitted.Add(BuildExchange(flow, key, flow.Requests.Dequeue(), null, partial: true));
+        }
+
+        while (flow.Responses.Count > MaxQueuedPerDirection)
+        {
+            emitted.Add(BuildExchange(flow, key, null, flow.Responses.Dequeue(), partial: true));
+        }
     }
 
     private void EvictIfNeeded()

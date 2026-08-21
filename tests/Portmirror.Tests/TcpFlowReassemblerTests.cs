@@ -220,4 +220,92 @@ public class TcpFlowReassemblerTests
         Assert.Equal("abc", Body(ex.Response));
         Assert.Equal("text/plain", ex.Response!.ContentType);
     }
+
+    // --- Regression: findings from the adversarial review of the reassembler ---
+
+    [Fact]
+    public void Pipelined_get_then_head_frames_each_response_correctly()
+    {
+        var r = New();
+        const string req1 = "GET /a HTTP/1.1\r\nHost: h\r\n\r\n";
+        const string req2 = "HEAD /b HTTP/1.1\r\nHost: h\r\n\r\n";
+        const string res1 = "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc";
+        const string res2 = "HTTP/1.1 200 OK\r\nContent-Length: 500\r\n\r\n";   // HEAD: no body sent
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 999, "", syn: true)));
+        // Both requests pipelined before any response.
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1000, req1)));
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, (uint)(1000 + req1.Length), req2)));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2000, res1)));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, (uint)(2000 + res1.Length), res2)));
+
+        Assert.Equal(2, got.Count);
+        Assert.Equal("/a", got[0].Url);
+        Assert.Equal("abc", Body(got[0].Response));   // GET kept its body
+        Assert.Equal("/b", got[1].Url);
+        Assert.Equal("HEAD", got[1].Verb);
+        Assert.Null(Body(got[1].Response));            // HEAD framed body-less, not a 500-byte phantom
+    }
+
+    [Fact]
+    public void A_new_connection_reusing_the_four_tuple_is_captured_not_dropped()
+    {
+        var r = New();
+        var got = new List<Exchange>();
+
+        // First connection, ISN 1000.
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1000, "", syn: true)));
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1001, "GET /first HTTP/1.1\r\nHost: h\r\n\r\n")));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2001, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nA")));
+
+        // Same 4-tuple reused by a brand-new connection with a different ISN.
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 8000, "", syn: true)));
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 8001, "GET /second HTTP/1.1\r\nHost: h\r\n\r\n")));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 9001, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nB")));
+
+        var urls = got.Where(e => e.Url is not null).Select(e => e.Url).ToList();
+        Assert.Contains("/first", urls);
+        Assert.Contains("/second", urls);   // the second connection was NOT dropped
+    }
+
+    [Fact]
+    public void A_retransmitted_syn_does_not_reset_the_flow()
+    {
+        var r = New();
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1000, "", syn: true)));
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1000, "", syn: true)));   // same ISN = retransmit
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1001, "GET /x HTTP/1.1\r\nHost: h\r\n\r\n")));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2001, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")));
+
+        var ex = Assert.Single(got);
+        Assert.Equal("/x", ex.Url);
+        Assert.False(ex.Partial);
+    }
+
+    [Fact]
+    public void A_backlog_of_unanswered_requests_is_bounded_and_flushed_as_partial()
+    {
+        var r = New();
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 999, "", syn: true)));
+
+        // Many requests, no responses (a lossy or one-sided capture). The queue must not grow
+        // without bound; the oldest are flushed as partial.
+        uint seq = 1000;
+        for (var i = 0; i < 600; i++)
+        {
+            var req = $"GET /{i} HTTP/1.1\r\nHost: h\r\n\r\n";
+            got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, seq, req)));
+            seq += (uint)req.Length;
+        }
+
+        var partials = got.Where(e => e.Partial && e.Request is not null && e.Response is null).ToList();
+        Assert.NotEmpty(partials);                 // bounding kicked in
+        Assert.Equal("/0", partials[0].Url);       // oldest flushed first
+    }
+
 }

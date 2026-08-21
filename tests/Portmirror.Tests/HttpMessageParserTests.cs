@@ -363,4 +363,23 @@ public class HttpMessageParserTests
         Assert.True(m.Headers.Count < 200, $"trailer flood not capped: {m.Headers.Count} headers");
     }
 
+
+    [Fact]
+    public void Pipelined_responses_each_consume_their_own_head_expectation_in_order()
+    {
+        // A GET then a HEAD were sent; their responses come back in order on one connection.
+        var p = new HttpMessageParser(MessageKind.Response);
+        p.ExpectResponse(false);   // answers the GET -> has a body
+        p.ExpectResponse(true);    // answers the HEAD -> no body, whatever the Content-Length says
+
+        var done = p.Append(B(
+            "HTTP/1.1 200 OK\nContent-Length: 3\n\nabc" +
+            "HTTP/1.1 200 OK\nContent-Length: 500\n\n"));
+
+        Assert.Equal(2, done.Count);
+        Assert.Equal("abc", Body(done[0]));   // GET response kept its body
+        Assert.Empty(done[1].Body);           // HEAD response framed body-less
+        Assert.False(p.HasPartialMessage);
+    }
+
 }
