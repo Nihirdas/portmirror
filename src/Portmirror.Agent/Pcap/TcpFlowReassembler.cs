@@ -154,7 +154,10 @@ public sealed class TcpFlowReassembler
 
     private void RouteSegment(Flow flow, TcpSegment seg, bool isClientToServer)
     {
-        // A SYN consumes one sequence number; data begins at ISN+1.
+        // A SYN consumes one sequence number; data begins at ISN+1. Seeding from the SYN is what
+        // makes out-of-order recovery possible. On a mid-stream capture with no SYN the first
+        // segment seen necessarily defines the start — earlier, lower-sequence bytes cannot be
+        // recovered because nothing established where the stream truly began.
         var initialSeq = seg.Syn ? seg.Sequence + 1 : seg.Sequence;
 
         if (isClientToServer)

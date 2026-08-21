@@ -57,7 +57,12 @@ public class TcpFlowReassemblerTests
         var half = req.Length / 2;
         var got = new List<Exchange>();
 
-        // Second half first, then the first half.
+        // The SYN fixes the initial sequence number, which is what lets out-of-order recovery
+        // work — a real capture sees the handshake. (Without a SYN the first segment seen defines
+        // the stream start, an unavoidable limit of mid-stream capture.)
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 999, "", syn: true)));
+
+        // Second half first, then the first half — data starts at ISN + 1 = 1000.
         got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, (uint)(1000 + half), req[half..])));
         got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1000, req[..half])));
         got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2000, "HTTP/1.1 201 Created\r\nContent-Length: 0\r\n\r\n")));
