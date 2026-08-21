@@ -139,7 +139,8 @@ public static class BodyDecoder
         }
         catch (DecoderFallbackException)
         {
-            return Encoding.Latin1.GetString(body);
+            // Latin1 property is net5+; ISO-8859-1 is the same code page and resolves on net48 too.
+            return Encoding.GetEncoding("ISO-8859-1").GetString(body);
         }
     }
 }

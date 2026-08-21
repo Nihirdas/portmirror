@@ -12,8 +12,10 @@ public static class MessageMapper
 {
     public static HttpMessage ToHttpMessage(ParsedMessage parsed, Redactor redactor)
     {
-        ArgumentNullException.ThrowIfNull(parsed);
-        ArgumentNullException.ThrowIfNull(redactor);
+        // Explicit guards rather than ArgumentNullException.ThrowIfNull, which is net6+; this
+        // file is also compiled into the net48 IIS module.
+        if (parsed is null) throw new ArgumentNullException(nameof(parsed));
+        if (redactor is null) throw new ArgumentNullException(nameof(redactor));
 
         var message = new HttpMessage
         {
