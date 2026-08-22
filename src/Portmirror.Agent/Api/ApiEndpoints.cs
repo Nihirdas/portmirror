@@ -290,6 +290,7 @@ public static class ApiEndpoints
         e.SiteId,
         e.QueueName,
         tier = e.Tier.ToString(),
+        direction = e.Direction.ToString(),
         e.Partial,
         request = MessageSummary(e.Request),
         response = MessageSummary(e.Response)
