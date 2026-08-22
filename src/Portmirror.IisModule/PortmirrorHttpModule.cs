@@ -3,37 +3,37 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Web;
-using Portmirror.Agent.Capture;
 using Portmirror.Agent.Faults;
-using Portmirror.Agent.Http;
 using Portmirror.Agent.Redaction;
 
 namespace Portmirror.IisModule;
 
 /// <summary>
-/// The in-process capture tier. Registered as a server-level IIS module, it observes every
-/// inbound request to the app pools it is installed in — including same-host traffic that packet
-/// capture cannot see — reads request and response bodies without disturbing the application, and
-/// can inject fault responses. Installing it costs one recycle; after that capture and faults
-/// toggle at runtime through the control file, with no recycle.
+/// The in-process capture tier: a server-level IIS module that observes every inbound request to
+/// the app pools it is installed in — including same-host traffic packet capture cannot see — reads
+/// request and response bodies, and can inject fault responses. Installing it costs one recycle;
+/// after that capture and faults toggle at runtime through the control file with no recycle.
 ///
-/// It is dormant until the control file enables it, and everything it does is best-effort: any
-/// failure is swallowed so the hosted application is never affected.
+/// Its overriding rule is to never affect the hosted application. On the request thread it only
+/// copies bytes and enqueues; all expensive work (decompression, redaction, mapping, the POST to
+/// the agent) happens on the sender's background thread. It is dormant until the control file
+/// enables it, and every operation is wrapped so a failure can never surface into the pipeline.
 /// </summary>
 public sealed class PortmirrorHttpModule : IHttpModule
 {
     private const string ItemFilter = "portmirror.filter";
-    private const string ItemReqBody = "portmirror.reqbody";
-    private const string ItemReqTruncated = "portmirror.reqtrunc";
     private const string ItemStart = "portmirror.start";
     private const string ItemSkip = "portmirror.skip";
 
-    // Shared across every module instance in the worker process.
     private static readonly ControlLoader Control = new();
-    private static readonly Lazy<ExchangeSender> Sender = new(() => new ExchangeSender(Control.Current));
     private static readonly Redactor SharedRedactor = new(enabled: true);
+    private static readonly Lazy<ExchangeSender> Sender =
+        new(() => new ExchangeSender(Control.Current, SharedRedactor));
 
-    private const int MaxDelayMs = 60_000;
+    // Delay faults hold a request thread for their duration (that is the point — simulating a slow
+    // dependency), so the cap is deliberately modest. Point a delay rule at a specific endpoint on
+    // a test box, never a hot production path.
+    private const int MaxDelayMs = 10_000;
 
     public void Init(HttpApplication context)
     {
@@ -51,17 +51,16 @@ public sealed class PortmirrorHttpModule : IHttpModule
 
             if (control.HasFaults && TryInjectFault(app, ctx, control))
             {
-                return;   // request short-circuited with an injected response
+                return;
             }
 
             if (!control.CaptureEnabled)
             {
-                return;   // dormant
+                return;
             }
 
+            // Cheap on the request thread: record the start and install the response filter.
             ctx.Items[ItemStart] = DateTimeOffset.UtcNow;
-            CaptureRequestBody(ctx, control.MaxBodyBytes);
-
             var filter = new ResponseCaptureStream(ctx.Response.Filter, control.MaxBodyBytes);
             ctx.Response.Filter = filter;
             ctx.Items[ItemFilter] = filter;
@@ -82,43 +81,39 @@ public sealed class PortmirrorHttpModule : IHttpModule
                 return;
             }
 
+            var control = Control.Current();
             var request = ctx.Request;
             var response = ctx.Response;
-
-            var reqBody = ctx.Items[ItemReqBody] as byte[] ?? Array.Empty<byte>();
-            var reqTruncated = ctx.Items[ItemReqTruncated] is true;
             var filter = ctx.Items[ItemFilter] as ResponseCaptureStream;
-            var respBody = filter?.GetCapturedBytes() ?? Array.Empty<byte>();
 
-            var reqMsg = BuildMessage(MessageKind.Request, ToHeaderList(request.Headers), reqBody, reqTruncated);
-            var respMsg = BuildMessage(MessageKind.Response, ToHeaderList(response.Headers), respBody,
-                filter?.Truncated ?? false);
+            // By EndRequest the body is fully received, so this read does not block; and the
+            // handler has finished, so touching InputStream cannot disturb it.
+            var (reqBody, reqTruncated) = ReadRequestBody(request, control.MaxBodyBytes);
 
-            var completed = DateTimeOffset.UtcNow;
-            var exchange = new Exchange
+            var raw = new RawExchange
             {
-                CorrelationId = Guid.NewGuid().ToString("n"),
-                Tier = CaptureTier.IisModule,
                 StartedUtc = started,
-                CompletedUtc = completed,
-                DurationMs = Math.Round((completed - started).TotalMilliseconds, 3),
+                CompletedUtc = DateTimeOffset.UtcNow,
                 Verb = request.HttpMethod,
-                Url = SharedRedactor.RedactUrl(SafeRawUrl(request)),
+                RawUrl = SafeRawUrl(request),
                 StatusCode = response.StatusCode,
                 ClientIp = request.UserHostAddress,
-                Request = reqMsg,
-                Response = respMsg
+                RequestHeaders = ToHeaderList(request.Headers),
+                RequestBody = reqBody,
+                RequestTruncated = reqTruncated,
+                ResponseHeaders = ToHeaderList(response.Headers),
+                ResponseBody = filter?.GetCapturedBytes() ?? Array.Empty<byte>(),
+                ResponseTruncated = filter?.Truncated ?? false
             };
 
-            Sender.Value.Enqueue(exchange);
+            // Redaction, decompression and mapping all happen on the sender's thread, not here.
+            Sender.Value.Enqueue(raw);
         }
         catch
         {
-            // Best-effort; drop on any error.
         }
     }
 
-    /// <summary>Injects a fault response when a rule matches. Returns true if the request was short-circuited.</summary>
     private static bool TryInjectFault(HttpApplication app, HttpContext ctx, ModuleControl control)
     {
         var decision = FaultMatcher.Match(control.Faults, ctx.Request.HttpMethod, SafeRawUrl(ctx.Request));
@@ -146,28 +141,32 @@ public sealed class PortmirrorHttpModule : IHttpModule
             response.Write(decision.Body);
         }
 
-        ctx.Items[ItemSkip] = true;   // do not also capture this synthetic response
+        ctx.Items[ItemSkip] = true;
         app.CompleteRequest();
         return true;
     }
 
-    private static void CaptureRequestBody(HttpContext ctx, int maxBytes)
+    private static (byte[] Body, bool Truncated) ReadRequestBody(HttpRequest request, int maxBytes)
     {
         try
         {
-            // GetBufferedInputStream reads a copy while leaving the real body intact for the
-            // handler — essential for SOAP/WCF endpoints, which break if the input is consumed.
-            var stream = ctx.Request.GetBufferedInputStream();
-            if (stream is null)
+            var input = request.InputStream;   // buffered and fully received at EndRequest
+            if (input is null || input.Length == 0)
             {
-                return;
+                return (Array.Empty<byte>(), false);
+            }
+
+            var restore = input.CanSeek ? input.Position : 0L;
+            if (input.CanSeek)
+            {
+                input.Position = 0;
             }
 
             using var ms = new MemoryStream();
             var buffer = new byte[16 * 1024];
             var truncated = false;
             int read;
-            while ((read = stream.Read(buffer, 0, buffer.Length)) > 0)
+            while ((read = input.Read(buffer, 0, buffer.Length)) > 0)
             {
                 var room = maxBytes - (int)ms.Length;
                 if (room <= 0)
@@ -184,21 +183,17 @@ public sealed class PortmirrorHttpModule : IHttpModule
                 }
             }
 
-            ctx.Items[ItemReqBody] = ms.ToArray();
-            ctx.Items[ItemReqTruncated] = truncated;
+            if (input.CanSeek)
+            {
+                input.Position = restore;
+            }
+
+            return (ms.ToArray(), truncated);
         }
         catch
         {
-            // If the body cannot be buffered, capture proceeds without it.
+            return (Array.Empty<byte>(), false);
         }
-    }
-
-    private static HttpMessage BuildMessage(
-        MessageKind kind, List<KeyValuePair<string, string>> headers, byte[] body, bool truncated)
-    {
-        var parsed = new ParsedMessage { Kind = kind, Headers = headers, Body = body, BodyTruncated = truncated };
-        BodyDecoder.Decode(parsed);   // undo Content-Encoding if present, exactly as the packet feed does
-        return MessageMapper.ToHttpMessage(parsed, SharedRedactor);
     }
 
     private static List<KeyValuePair<string, string>> ToHeaderList(System.Collections.Specialized.NameValueCollection headers)
@@ -231,6 +226,5 @@ public sealed class PortmirrorHttpModule : IHttpModule
 
     public void Dispose()
     {
-        // The shared sender is process-lived; nothing per-instance to release.
     }
 }

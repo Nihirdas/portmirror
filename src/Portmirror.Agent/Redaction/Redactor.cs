@@ -30,6 +30,11 @@ public sealed class Redactor
         "authentication"
     };
 
+    /// <summary>Query-string parameters whose value is a secret; the value is masked, the name kept.</summary>
+    private static readonly Regex SensitiveQueryParam = new(
+        @"([?&](?:password|passwd|pwd|secret|token|access_token|refresh_token|id_token|api[_-]?key|apikey|auth|authorization|sig|signature|cvv|pin|session|sessionid)=)[^&#\s]*",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase, Budget);
+
     /// <summary>Candidate primary account numbers: 13-19 digits, verified with Luhn before masking.</summary>
     private static readonly Regex CardCandidate = new(
         @"\b\d{13,19}\b", RegexOptions.Compiled, Budget);
@@ -94,11 +99,13 @@ public sealed class Redactor
 
         try
         {
-            return MaskCardNumbers(url);
+            var masked = SensitiveQueryParam.Replace(url, m => m.Groups[1].Value + Mask);
+            return MaskCardNumbers(masked);
         }
         catch (RegexMatchTimeoutException)
         {
-            return url;
+            // Never emit an unredacted URL; a pathological input is masked wholesale.
+            return Mask;
         }
     }
 

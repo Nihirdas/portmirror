@@ -104,4 +104,31 @@ public class RedactorTests
     {
         Assert.Equal(expected, Redactor.PassesLuhn(digits));
     }
+
+    [Theory]
+    [InlineData("/oauth/callback?access_token=abc123&state=x", "access_token")]
+    [InlineData("/api?apikey=SECRET&page=2", "apikey")]
+    [InlineData("/login?user=nk&password=hunter2", "password")]
+    [InlineData("/x?token=aaa.bbb.ccc", "token")]
+    [InlineData("/s?api_key=zzz", "api_key")]
+    public void Masks_sensitive_query_string_parameters(string url, string param)
+    {
+        var result = _redactor.RedactUrl(url);
+
+        Assert.Contains(Redactor.Mask, result!);
+        Assert.DoesNotContain("hunter2", result);
+        Assert.DoesNotContain("abc123", result);
+        Assert.DoesNotContain("SECRET", result);
+        Assert.DoesNotContain("aaa.bbb.ccc", result);
+        Assert.DoesNotContain("zzz", result);
+        Assert.Contains(param, result);   // the parameter name is kept, only the value masked
+    }
+
+    [Fact]
+    public void Keeps_non_sensitive_query_parameters_intact()
+    {
+        var result = _redactor.RedactUrl("/api/orders?page=2&sort=date");
+        Assert.Equal("/api/orders?page=2&sort=date", result);
+    }
+
 }

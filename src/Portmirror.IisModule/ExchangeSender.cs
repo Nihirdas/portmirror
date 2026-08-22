@@ -7,13 +7,16 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Portmirror.Agent.Capture;
+using Portmirror.Agent.Http;
+using Portmirror.Agent.Redaction;
 
 namespace Portmirror.IisModule;
 
 /// <summary>
-/// Ships captured exchanges to the agent off the request thread. Requests enqueue and return
-/// immediately; a background loop batches and POSTs. If the agent is unreachable the batch is
-/// dropped — capturing traffic must never slow or break the application being observed.
+/// Takes raw captures off the request thread and does everything expensive here on a background
+/// loop: decompression, redaction, mapping, and the network POST. The request thread only ever
+/// enqueues a byte copy, so nothing the module does adds latency to the hosted application.
+/// If the agent is unreachable, batches are dropped.
 /// </summary>
 public sealed class ExchangeSender : IDisposable
 {
@@ -28,30 +31,31 @@ public sealed class ExchangeSender : IDisposable
     private const int MaxQueued = 2000;
     private const int MaxBatch = 100;
 
-    private readonly ConcurrentQueue<Exchange> _queue = new();
+    private readonly ConcurrentQueue<RawExchange> _queue = new();
     private readonly CancellationTokenSource _cts = new();
     private readonly Task _loop;
     private readonly Func<ModuleControl> _control;
+    private readonly Redactor _redactor;
     private int _dropped;
 
-    public ExchangeSender(Func<ModuleControl> control)
+    public ExchangeSender(Func<ModuleControl> control, Redactor redactor)
     {
         _control = control;
+        _redactor = redactor;
         _loop = Task.Run(() => RunAsync(_cts.Token));
     }
 
     public int Dropped => Volatile.Read(ref _dropped);
 
-    public void Enqueue(Exchange exchange)
+    public void Enqueue(RawExchange raw)
     {
         if (_queue.Count >= MaxQueued)
         {
-            // Backpressure: drop rather than grow without bound if the agent is down.
             Interlocked.Increment(ref _dropped);
             return;
         }
 
-        _queue.Enqueue(exchange);
+        _queue.Enqueue(raw);
     }
 
     private async Task RunAsync(CancellationToken ct)
@@ -60,7 +64,7 @@ public sealed class ExchangeSender : IDisposable
         {
             try
             {
-                var batch = Drain();
+                var batch = DrainAndTransform();
                 if (batch.Count > 0)
                 {
                     await PostAsync(batch, ct);
@@ -74,20 +78,60 @@ public sealed class ExchangeSender : IDisposable
             }
             catch
             {
-                // Swallow: the sender is best-effort and must not throw into the app.
+                // Best-effort; never throw out of the loop.
             }
         }
     }
 
-    private List<Exchange> Drain()
+    private List<Exchange> DrainAndTransform()
     {
         var batch = new List<Exchange>();
-        while (batch.Count < MaxBatch && _queue.TryDequeue(out var e))
+        while (batch.Count < MaxBatch && _queue.TryDequeue(out var raw))
         {
-            batch.Add(e);
+            try
+            {
+                batch.Add(Transform(raw));
+            }
+            catch
+            {
+                // A single malformed capture must not sink the batch.
+            }
         }
 
         return batch;
+    }
+
+    /// <summary>
+    /// Turns a raw capture into a redacted exchange — the CPU-heavy work (inflate, regex redaction,
+    /// mapping), all here on the background thread rather than the request thread.
+    /// </summary>
+    private Exchange Transform(RawExchange raw)
+    {
+        var request = BuildMessage(MessageKind.Request, raw.RequestHeaders, raw.RequestBody, raw.RequestTruncated);
+        var response = BuildMessage(MessageKind.Response, raw.ResponseHeaders, raw.ResponseBody, raw.ResponseTruncated);
+
+        return new Exchange
+        {
+            CorrelationId = Guid.NewGuid().ToString("n"),
+            Tier = CaptureTier.IisModule,
+            StartedUtc = raw.StartedUtc,
+            CompletedUtc = raw.CompletedUtc,
+            DurationMs = Math.Round((raw.CompletedUtc - raw.StartedUtc).TotalMilliseconds, 3),
+            Verb = raw.Verb,
+            Url = _redactor.RedactUrl(raw.RawUrl),
+            StatusCode = raw.StatusCode,
+            ClientIp = raw.ClientIp,
+            Request = request,
+            Response = response
+        };
+    }
+
+    private HttpMessage BuildMessage(
+        MessageKind kind, List<KeyValuePair<string, string>> headers, byte[] body, bool truncated)
+    {
+        var parsed = new ParsedMessage { Kind = kind, Headers = headers, Body = body, BodyTruncated = truncated };
+        BodyDecoder.Decode(parsed);
+        return MessageMapper.ToHttpMessage(parsed, _redactor);
     }
 
     private async Task PostAsync(List<Exchange> batch, CancellationToken ct)
@@ -107,11 +151,10 @@ public sealed class ExchangeSender : IDisposable
             }
 
             using var response = await Http.SendAsync(request, ct);
-            // Response ignored; if the agent rejects a batch there is nothing useful to do here.
         }
         catch
         {
-            // Agent down or unreachable: drop this batch. Never surface to the request.
+            // Agent down / unreachable: drop the batch. Never surface to the app.
         }
     }
 
@@ -124,7 +167,6 @@ public sealed class ExchangeSender : IDisposable
         }
         catch
         {
-            // Shutting down; ignore.
         }
 
         _cts.Dispose();
