@@ -32,9 +32,11 @@ public sealed class AgentOptions
     /// fewer boundaries, so fewer connections are cut — at the cost of taking that long to surface.
     /// (What is stranded behind a boundary is then recovered on the next window, so the loss is
     /// at most the one message straddling each boundary rather than the rest of the connection.)
-    /// Set to 0 or less for batch mode: a single continuous capture, processed only when the feed
-    /// stops. Batch mode has no boundaries at all, so it drops nothing, but shows nothing until
-    /// stop — pktmon cannot convert a running capture.
+    /// Set to 0 or less for batch mode: one continuous capture, processed only when the feed stops
+    /// (pktmon cannot convert a running capture, so nothing surfaces until then). With no restart
+    /// boundaries it is the most complete when the capture layer keeps up — but it cannot pair a
+    /// connection incrementally, so a capture that drops packets mid-connection strands more here
+    /// than in interval mode, where each short window pairs before the losses accumulate.
     /// </summary>
     public int PacketIntervalSeconds { get; set; } = 30;
 
