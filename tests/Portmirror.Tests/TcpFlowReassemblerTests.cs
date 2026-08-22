@@ -388,6 +388,50 @@ public class TcpFlowReassemblerTests
     }
 
     [Fact]
+    public void A_dropped_request_does_not_mispair_later_responses_when_the_flow_closes()
+    {
+        var r = New();
+        const string req0 = "GET /0 HTTP/1.1\r\nHost: h\r\n\r\n";
+        const string req2 = "GET /2 HTTP/1.1\r\nHost: h\r\n\r\n";   // same length as req0
+        const string res0 = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nA";
+        const string res1 = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nB";   // same length as res0
+        const string res2 = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nC";
+        var L = (uint)req0.Length;
+        var M = (uint)res0.Length;
+        var got = new List<Exchange>();
+
+        r.Accept(Seg(Client, 5000, Server, 80, 1000, "", syn: true));
+        r.Accept(Seg(Server, 80, Client, 5000, 5000, "", syn: true, ack: true));
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1001, req0)));               // req0
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 5001, res0)));               // res0 -> pairs
+        // req1 (at 1001 + L) is dropped entirely — the outbound packet never captured.
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 5001 + M, res1)));            // res1 (its request is gone)
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1001 + 2 * L, req2)));        // req2 -> stranded behind the hole
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 5001 + 2 * M, res2)));        // res2
+
+        // Before the connection closes, only req0/res0 has paired.
+        Assert.Single(got.Where(e => !e.Partial));
+
+        got.AddRange(r.Flush());
+
+        // Exactly one complete pair overall. The dropped request left the queues a different
+        // length; pairing FIFO across that would confidently pair req2 with res1 — a wrong body on
+        // the wrong request. It must stay one complete pair.
+        var complete = got.Where(e => !e.Partial).ToList();
+        var only = Assert.Single(complete);
+        Assert.Equal("/0", only.Url);
+        Assert.Equal("A", Body(only.Response));
+
+        // The stranded request is still recovered and surfaced — as a request-only partial, not
+        // mispaired and not lost.
+        Assert.Contains(got, e => e.Partial && e.Url == "/2" && e.Response is null);
+
+        // Both orphaned responses surface as response-only partials.
+        Assert.Equal(2, got.Count(e => e.Partial && e.Verb is null && e.Response is not null));
+    }
+
+    [Fact]
     public void A_flow_making_normal_progress_is_left_untouched_by_recovery()
     {
         var r = New();

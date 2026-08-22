@@ -156,8 +156,8 @@ public sealed class TcpFlowReassembler
                           || flow.ServerToClient is { PendingBytes: > 0 };
             if (stalled)
             {
-                // RecoverFlow never adds or removes flows, so iterating _flows directly is safe.
-                RecoverFlow(flow, key, emitted);
+                // DrainGaps never adds or removes flows, so iterating _flows directly is safe.
+                DrainGaps(flow, key, emitted);
             }
         }
 
@@ -265,10 +265,11 @@ public sealed class TcpFlowReassembler
 
     private void CloseInto(Flow flow, FlowKey key, List<Exchange> emitted)
     {
-        // Release anything stranded behind a gap, then let each parser surface a final
-        // partial message it was still assembling.
-        if (flow.ClientToServer is not null) { FeedRequest(flow, flow.ClientToServer.SkipGap()); }
-        if (flow.ServerToClient is not null) { FeedResponse(flow, flow.ServerToClient.SkipGap()); }
+        // Release everything stranded behind any gap first — with parser resync, across every
+        // hole — then let each parser surface the final partial message it was still assembling.
+        // This is the same recovery the interval loop runs; a flow closed by FIN/RST mid-capture
+        // (common in batch mode) reaches it only here.
+        DrainGaps(flow, key, emitted);
 
         var lastRequest = flow.RequestParser.Finish();
         if (lastRequest is not null) { flow.Requests.Enqueue(lastRequest); }
@@ -295,43 +296,55 @@ public sealed class TcpFlowReassembler
     }
 
     /// <summary>
-    /// Recovers one flow stalled behind a permanent gap, leaving it open to carry on. It surfaces
-    /// the pairs framed before the gap, flushes anything left unpaired as a flagged partial, then
-    /// skips the hole in both directions and resynchronises both parsers to the next message.
+    /// Drains every permanent gap on one flow, leaving it open to carry on. For each hole it
+    /// surfaces the pairs framed before it, flushes whatever could not pair as a flagged partial
+    /// so both queues realign to empty, resynchronises both parsers, then skips the hole and feeds
+    /// what came after. It repeats until nothing is left buffered behind a hole, so a long
+    /// continuous capture with several drops on one connection recovers across all of them, not
+    /// just the first.
     ///
-    /// Flushing the unpaired remainder is what keeps this honest: the request and response queues
-    /// are realigned to empty, so the transactions captured after the gap pair up correctly again.
-    /// The alternative — resyncing one side but not the other — would leave the queues off by one
-    /// and silently attach the wrong body to every later request. A flagged partial is far better
-    /// than a confident mispair.
+    /// Flushing the unpaired remainder is what keeps this honest. An asymmetric loss — a request
+    /// dropped but its response captured, say — leaves the two queues a different length; pairing
+    /// FIFO across that would silently attach the wrong body to every later request. Realigning to
+    /// empty at each gap surfaces the odd ones out as flagged partials instead, which is far better
+    /// than a confident mispair, and lets the transactions after the gap pair up correctly again.
     /// </summary>
-    private void RecoverFlow(Flow flow, FlowKey key, List<Exchange> emitted)
+    private void DrainGaps(Flow flow, FlowKey key, List<Exchange> emitted)
     {
-        // Emit anything already complete, then drain the remainder as partials so both queues
-        // are empty and back in step.
-        Pair(flow, key, emitted);
-
-        while (flow.Requests.Count > 0)
+        var guard = 0;
+        while (true)
         {
-            emitted.Add(BuildExchange(flow, key, flow.Requests.Dequeue(), null, partial: true));
+            // Emit anything complete, then drain the remainder as partials so both queues are
+            // empty and back in step before the next hole is skipped.
+            Pair(flow, key, emitted);
+
+            while (flow.Requests.Count > 0)
+            {
+                emitted.Add(BuildExchange(flow, key, flow.Requests.Dequeue(), null, partial: true));
+            }
+
+            while (flow.Responses.Count > 0)
+            {
+                emitted.Add(BuildExchange(flow, key, null, flow.Responses.Dequeue(), partial: true));
+            }
+
+            var stalled = flow.ClientToServer is { PendingBytes: > 0 }
+                          || flow.ServerToClient is { PendingBytes: > 0 };
+            if (!stalled || ++guard > 4096)
+            {
+                return;
+            }
+
+            // Drop each half-parsed message; the released bytes begin mid-stream.
+            flow.RequestParser.ResyncAfterGap();
+            flow.ResponseParser.ResyncAfterGap();
+
+            // Skip this hole and feed what followed. Requests first so their HEAD markers queue in
+            // order before the responses that answer them are parsed. Each SkipGap moves the stream
+            // strictly forward, so the bytes buffered behind a hole shrink every pass — this ends.
+            if (flow.ClientToServer is not null) { FeedRequest(flow, flow.ClientToServer.SkipGap()); }
+            if (flow.ServerToClient is not null) { FeedResponse(flow, flow.ServerToClient.SkipGap()); }
         }
-
-        while (flow.Responses.Count > 0)
-        {
-            emitted.Add(BuildExchange(flow, key, null, flow.Responses.Dequeue(), partial: true));
-        }
-
-        // Drop the half-parsed message on each side; the released bytes begin mid-stream.
-        flow.RequestParser.ResyncAfterGap();
-        flow.ResponseParser.ResyncAfterGap();
-
-        // Skip the hole and feed what came after it; the resynced parsers frame the next whole
-        // messages from those bytes. Requests are fed first so their HEAD markers are queued in
-        // order before the responses that answer them are parsed.
-        if (flow.ClientToServer is not null) { FeedRequest(flow, flow.ClientToServer.SkipGap()); }
-        if (flow.ServerToClient is not null) { FeedResponse(flow, flow.ServerToClient.SkipGap()); }
-
-        Pair(flow, key, emitted);
     }
 
     /// <summary>
