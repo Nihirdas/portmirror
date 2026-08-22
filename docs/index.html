@@ -399,7 +399,7 @@
 <header class="hero" id="top">
   <div class="wrap">
     <div class="rail">
-      <span class="status fx"><span class="beacon"></span> <b>Work in progress</b> · v0.1.0 · the agent captures, the rest is roadmap</span>
+      <span class="status fx"><span class="beacon"></span> <b>Work in progress</b> · v0.1.0 · three capture tiers built · the multi-machine console is next</span>
       <h1 class="fx" style="--d:.08s">See the traffic on your server. <em>No proxy, no subscription.</em></h1>
       <p class="lede fx" style="--d:.16s">
         Portmirror is a small, open-source HTTP capture agent for Windows and IIS. It watches requests
@@ -572,10 +572,11 @@
         <span class="tag">Part one — the agent · exists today</span>
         <h3>A single executable on the box</h3>
         <p>
-          Drop it on the server, or install it as a Windows service. It reads the kernel HTTP stack,
-          keeps a bounded ring of recent exchanges in memory, and serves a live-tail page plus a JSON API
-          on a port you choose. Redaction runs before anything is stored. It holds no database and writes
-          no log of its own.
+          Drop it on the server, or install it as a Windows service. It reads the kernel HTTP stack for
+          request metadata and, when you enable it, captures request and response bodies from the wire. It
+          keeps a bounded ring of recent exchanges in memory and serves a live-tail page plus a JSON API on
+          a port you choose. Redaction runs before anything is stored. It holds no database and writes no
+          log of its own.
         </p>
       </div>
       <div class="card">
@@ -614,13 +615,13 @@
             <td>Nothing. No install into the application, no restart, no proxy.</td>
           </tr>
           <tr>
-            <td><strong>Packet capture</strong><br><span style="font-size:.85em">planned</span></td>
+            <td><strong>Packet capture</strong><br><span style="font-size:.85em">shipping today</span></td>
             <td><span class="yn y">yes</span></td>
             <td><span class="yn n">no</span></td>
-            <td>Nothing to install — but it only sees plaintext, and traffic between two processes on the same machine never reaches the layer it attaches to.</td>
+            <td>Nothing to install — but it reads plaintext only, and captures the wire best-effort: a zero-touch spot capture, not a guaranteed-complete record.</td>
           </tr>
           <tr>
-            <td><strong>Server-level module</strong><br><span style="font-size:.85em">planned</span></td>
+            <td><strong>Server-level module</strong><br><span style="font-size:.85em">shipping today</span></td>
             <td><span class="yn y">yes</span></td>
             <td><span class="yn y">yes</span></td>
             <td>One restart when you install it — and only then. After that, capture toggles at runtime like everything else. The only place a response can be altered.</td>
@@ -629,9 +630,9 @@
       </table>
     </div>
     <p class="lede" style="margin-top:22px; font-size:.95rem">
-      That middle row is the reason the third exists. Packet capture is wonderfully zero-touch, and on a
-      server where services talk to each other locally it is structurally blind to most of what you care
-      about.
+      That middle row is why the third exists. Packet capture is wonderfully zero-touch, but it is blind
+      to same-machine calls and only best-effort on the wire. The module is the tier that captures
+      everything — loopback included — and the only one that can alter a response.
     </p>
   </div>
 </section>
@@ -641,8 +642,8 @@
     <p class="eyebrow">Roadmap</p>
     <h2>Where this is going.</h2>
     <p class="lede">
-      Phases are ordered because each one depends on the last. Everything below phase one is open — if a
-      piece of it interests you, it is yours to take.
+      Roughly in build order. The capture work is largely done; the multi-machine console and the open
+      questions are where help is most useful — if a piece interests you, it is yours to take.
     </p>
 
     <div class="phases">
@@ -661,14 +662,14 @@
         </div>
       </div>
 
-      <div class="phase now">
+      <div class="phase done">
         <div class="num">02</div>
         <div>
-          <div class="phase-head"><h3>Payloads</h3><span class="chip now">in progress</span></div>
+          <div class="phase-head"><h3>Payloads</h3><span class="chip done">shipped</span></div>
           <p>Show what was actually in the message — request and response bodies, two ways.</p>
           <ul>
             <li>Request and response bodies, pretty-printed as JSON and XML — done</li>
-            <li>Stream reassembly for the zero-install packet path — done</li>
+            <li>The zero-install packet feed — bodies both directions, reassembled from the wire and recovered across capture windows — done</li>
             <li>An in-process server module for same-host traffic and full fidelity — done</li>
             <li>Response fault injection for testing error paths — done</li>
             <li>Size caps so a large upload cannot exhaust memory — done</li>
@@ -690,15 +691,16 @@
         </div>
       </div>
 
-      <div class="phase">
+      <div class="phase done">
         <div class="num">04</div>
         <div>
-          <div class="phase-head"><h3>Fault injection</h3><span class="chip">planned</span></div>
-          <p>Error handling is hard to test when errors will not happen on demand.</p>
+          <div class="phase-head"><h3>Fault injection</h3><span class="chip done">shipped</span></div>
+          <p>Error handling is hard to test when errors will not happen on demand. This lives in the
+             server module — the one tier that can alter a response.</p>
           <ul>
-            <li>Rules that force a chosen status for a matching request</li>
-            <li>Injected latency and dropped connections</li>
-            <li>Scoped to a path, a caller or a time window, and off by default</li>
+            <li>Rules that force a chosen status for a matching request — done</li>
+            <li>Injected latency before the real response — done</li>
+            <li>Matched by path or method, first rule wins, and off by default — done</li>
           </ul>
         </div>
       </div>
@@ -750,19 +752,21 @@
       </div>
       <div class="help-item">
         <span class="lvl deep">Deep end</span>
-        <h3>Stream reassembly</h3>
+        <h3>Wring more out of packet capture</h3>
         <p>
-          Turning captured packets back into whole HTTP messages: keep-alive, chunked encoding,
-          compression, out-of-order segments. Self-contained, properly interesting, and the thing standing
-          between the project and payloads.
+          The feed reassembles whatever the OS hands it and recovers across capture windows, but the OS
+          still drops packets under load — small outbound ones especially, on virtualised NICs. Measuring
+          where that happens on real hardware, and whether a different capture mode helps, is open and
+          self-contained.
         </p>
       </div>
       <div class="help-item">
         <span class="lvl deep">Deep end</span>
-        <h3>The server-level module</h3>
+        <h3>Fold the module's dependencies into one DLL</h3>
         <p>
-          Reading bodies from inside the request pipeline without disturbing the application — which is
-          entirely possible to get wrong, and needs someone who has done it before to get right.
+          The IIS module needs assembly binding redirects on .NET Framework because of its dependency
+          chain, which makes install fiddlier than it should be. Merging the dependencies into the module
+          assembly would turn install into a single copy.
         </p>
       </div>
       <div class="help-item">

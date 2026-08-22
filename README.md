@@ -6,8 +6,9 @@ application pool**.
 
 **[nihirdas.github.io/portmirror](https://nihirdas.github.io/portmirror/)** — the idea, the roadmap, and where to help.
 
-> Status: early. Today's build captures inbound request metadata. Bodies and response
-> overriding are on the roadmap below.
+> Status: early, but past the interesting part. The agent captures inbound request metadata
+> with no proxy and no app-pool recycle; two further tiers add request and response bodies, and
+> one of them can inject faults. The multi-machine console is the main thing still ahead.
 
 ## Why
 
@@ -52,14 +53,18 @@ Three mechanisms, chosen for what you need rather than layered on top of each ot
 
 | Tier | Mechanism | Bodies | Same-host traffic | Cost |
 |---|---|---|---|---|
-| **ETW metadata** (shipping) | `Microsoft-Windows-HttpService` | no | **yes** | none — no restart, no install into the app |
-| Packet capture (planned) | `pktmon`, built into Server 2019+ | yes | **no** — NDIS never sees the loopback fast path | none, but plaintext only |
-| IIS module (planned) | server-level native/managed module | yes | yes | one recycle when installed, then toggled at runtime |
+| **ETW metadata** | `Microsoft-Windows-HttpService` | no | **yes** | none — no restart, no install into the app |
+| **Packet capture** | `pktmon`, built into Server 2019+ | yes | **no** — NDIS never sees the loopback fast path | none to install; plaintext only, and best-effort (below) |
+| **IIS module** | server-level managed module ([MODULE.md](MODULE.md)) | yes | yes | one recycle when installed, then toggled at runtime; the only tier that can inject faults |
 
-Worth knowing up front: packet capture cannot see traffic where the caller and callee are the
-same machine, because Windows routes that through a loopback fast path that never reaches the
-layer packet capture attaches to. The IIS module tier exists for exactly that gap — and it is
-also the only place a response can be altered, which is what fault injection needs.
+Two things worth knowing up front. Packet capture cannot see traffic where the caller and callee
+are the same machine — Windows routes that through a loopback fast path that never reaches the
+layer `pktmon` attaches to. And it captures from the wire **best-effort**: it reassembles whatever
+packets the OS hands it, recovering across the gaps left when a capture window rolls over, but under
+load the OS capture itself can still drop packets — so treat it as a zero-touch spot capture, not a
+guaranteed-complete record. The IIS module tier exists for exactly those gaps — complete bodies,
+including same-host traffic — and it is also the only place a response can be altered, which is what
+fault injection needs.
 
 ## Quick start
 
@@ -86,6 +91,10 @@ portmirror.exe --Portmirror:Port=9099 --Portmirror:Capacity=5000
 | `Portmirror:RedactionEnabled` | `true` | Mask cards, credentials and tokens |
 | `Portmirror:AuthToken` | none | When set, `/api/*` requires it in `X-Portmirror-Token` |
 | `Portmirror:IdleTimeoutSeconds` | `30` | When to flush a request whose terminal event never arrived |
+| `Portmirror:PacketCaptureEnabled` | `false` | Start the packet (body) feed at startup; needs Windows and elevation |
+| `Portmirror:PacketServerPorts` | none | Ports to scope capture to and treat as servers — keeps the capture small and tags each exchange inbound or outbound |
+| `Portmirror:PacketIntervalSeconds` | `30` | Capture-window length: the latency-versus-completeness knob. Longer windows cut fewer connections; `0` or less selects batch mode — one continuous capture, processed when the feed stops |
+| `Portmirror:PacketFileSizeMb` | `50` | Circular capture-file cap, per window |
 
 ### Run as a Windows service
 
@@ -107,7 +116,8 @@ The same binary detects it is running as a service; no separate build is needed.
 | `GET /api/exchanges/{id}` | One exchange |
 | `DELETE /api/exchanges` | Drop everything retained |
 | `GET /api/stream?since=` | Server-sent events, live |
-| `POST /api/capture/start` · `/stop` | Toggle capture with no restart |
+| `POST /api/capture/start` · `/stop` | Toggle the ETW metadata capture with no restart |
+| `POST /api/capture/packets/start` · `/stop` | Toggle the packet (body) feed |
 | `GET /api/diagnostics/etw` | Which HTTP.SYS events were seen, and the payload fields they carry |
 
 Every exchange carries a monotonic `seq`, so a client polls with `?since=N` and will neither
@@ -130,10 +140,10 @@ tokens and cookies.
 ## Roadmap
 
 - [x] HTTP.SYS ETW capture, ring buffer, live-tail UI, single-file service
-- [ ] Request and response bodies, pretty-printed as JSON and XML
-- [ ] `pktmon` zero-touch mode for boxes where installing a module is not allowed
-- [ ] Server-level IIS module: bodies for TLS-terminated sites and same-host traffic
-- [ ] Fault injection — rules that force a 4xx/5xx or add latency, to exercise error handling
+- [x] Request and response bodies, pretty-printed as JSON and XML
+- [x] `pktmon` packet feed — bodies both directions, zero-touch, no recycle, gap recovery across capture windows
+- [x] Server-level IIS module — bodies for TLS-terminated sites and same-host traffic
+- [x] Fault injection — rules that force a 4xx/5xx or add latency, to exercise error handling
 - [ ] Multi-agent aggregation, so one page can watch a whole fleet
 
 ## Building
