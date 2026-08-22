@@ -56,6 +56,40 @@ public class PcapProcessorTests
     }
 
     [Fact]
+    public void Recovers_a_flow_stranded_across_two_files()
+    {
+        var processor = new PcapProcessor(new Redactor(true), new[] { 80 });
+
+        const string req1 = "GET /1 HTTP/1.1\r\nHost: h\r\n\r\n";
+        const string res1 = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nA";
+        const string req2 = "GET /2 HTTP/1.1\r\nHost: h\r\n\r\n";
+        const string res2 = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nB";
+
+        // A keep-alive connection: one whole transaction in the first capture file.
+        var file1 = PacketBuilders.Pcapng(PacketParser.LinkTypeEthernet, new[]
+        {
+            Frame("10.0.0.1", 5000, "10.0.0.2", 80, 1, req1),
+            Frame("10.0.0.2", 80, "10.0.0.1", 5000, 1, res1)
+        });
+        // The next transaction lands in the second file, but the stop/start gap between windows
+        // dropped the bytes in between, so each direction resumes 40 bytes past where it left off.
+        var file2 = PacketBuilders.Pcapng(PacketParser.LinkTypeEthernet, new[]
+        {
+            Frame("10.0.0.1", 5000, "10.0.0.2", 80, (uint)(1 + req1.Length + 40), req2),
+            Frame("10.0.0.2", 80, "10.0.0.1", 5000, (uint)(1 + res1.Length + 40), res2)
+        });
+
+        Assert.Single(processor.Process(file1));   // first transaction pairs
+        Assert.Empty(processor.Process(file2));     // second is stranded behind the gap
+        var recovered = processor.RecoverStalled();
+
+        var ex = Assert.Single(recovered);
+        Assert.Equal("/2", ex.Url);
+        Assert.Equal("B", ex.Response!.Body);
+        Assert.False(ex.Partial);
+    }
+
+    [Fact]
     public void An_empty_file_yields_nothing_and_does_not_throw()
     {
         var processor = new PcapProcessor(new Redactor(true));

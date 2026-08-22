@@ -135,6 +135,27 @@ public sealed class HttpMessageParser
         return null;
     }
 
+    /// <summary>
+    /// Abandons the message in flight because the captured stream lost bytes it needed and can
+    /// never get back. The bytes fed next begin somewhere mid-stream, so this realigns to the
+    /// next start line they contain — rather than mistaking them for the lost message's body,
+    /// which is exactly what would happen while the parser sat waiting in a body state. Any
+    /// half-built message, any buffered scraps, and any pending HEAD expectations are dropped,
+    /// since after a gap the request/response correspondence can no longer be trusted.
+    /// Returns true if a partial message was actually discarded.
+    /// </summary>
+    public bool ResyncAfterGap()
+    {
+        var hadPartial = HasPartialMessage;
+
+        Reset();
+        _buffer.Clear();
+        _consumed = 0;
+        _headExpectations.Clear();
+
+        return hadPartial;
+    }
+
     private bool Step(List<ParsedMessage> done)
     {
         switch (_state)

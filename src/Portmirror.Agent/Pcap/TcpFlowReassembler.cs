@@ -135,6 +135,35 @@ public sealed class TcpFlowReassembler
         return emitted;
     }
 
+    /// <summary>
+    /// Releases flows stranded behind a capture gap, without closing them. Call this once after a
+    /// whole capture file has been folded in: by then every segment in the file has been offered,
+    /// so any bytes still buffered ahead of a hole can only be waiting on bytes that will never
+    /// arrive — dropped in the stop/start gap between capture windows, or by the NIC. The peer
+    /// already acknowledged them, so there is no wire retransmit to recapture.
+    ///
+    /// Without this, a keep-alive connection that loses bytes at one interval boundary strands
+    /// every later message on it until the connection finally closes — which for a long-lived
+    /// server-to-server connection may be never within a capture. This skips the hole and lets
+    /// the flow keep producing exchanges.
+    /// </summary>
+    public IReadOnlyList<Exchange> RecoverStalled()
+    {
+        var emitted = new List<Exchange>();
+        foreach (var (key, flow) in _flows)
+        {
+            var stalled = flow.ClientToServer is { PendingBytes: > 0 }
+                          || flow.ServerToClient is { PendingBytes: > 0 };
+            if (stalled)
+            {
+                // RecoverFlow never adds or removes flows, so iterating _flows directly is safe.
+                RecoverFlow(flow, key, emitted);
+            }
+        }
+
+        return emitted;
+    }
+
     private void EstablishDirection(Flow flow, TcpSegment seg)
     {
         if (flow.DirectionKnown)
@@ -263,6 +292,46 @@ public sealed class TcpFlowReassembler
 
         _flows.Remove(key);
         _order.Remove(key);
+    }
+
+    /// <summary>
+    /// Recovers one flow stalled behind a permanent gap, leaving it open to carry on. It surfaces
+    /// the pairs framed before the gap, flushes anything left unpaired as a flagged partial, then
+    /// skips the hole in both directions and resynchronises both parsers to the next message.
+    ///
+    /// Flushing the unpaired remainder is what keeps this honest: the request and response queues
+    /// are realigned to empty, so the transactions captured after the gap pair up correctly again.
+    /// The alternative — resyncing one side but not the other — would leave the queues off by one
+    /// and silently attach the wrong body to every later request. A flagged partial is far better
+    /// than a confident mispair.
+    /// </summary>
+    private void RecoverFlow(Flow flow, FlowKey key, List<Exchange> emitted)
+    {
+        // Emit anything already complete, then drain the remainder as partials so both queues
+        // are empty and back in step.
+        Pair(flow, key, emitted);
+
+        while (flow.Requests.Count > 0)
+        {
+            emitted.Add(BuildExchange(flow, key, flow.Requests.Dequeue(), null, partial: true));
+        }
+
+        while (flow.Responses.Count > 0)
+        {
+            emitted.Add(BuildExchange(flow, key, null, flow.Responses.Dequeue(), partial: true));
+        }
+
+        // Drop the half-parsed message on each side; the released bytes begin mid-stream.
+        flow.RequestParser.ResyncAfterGap();
+        flow.ResponseParser.ResyncAfterGap();
+
+        // Skip the hole and feed what came after it; the resynced parsers frame the next whole
+        // messages from those bytes. Requests are fed first so their HEAD markers are queued in
+        // order before the responses that answer them are parsed.
+        if (flow.ClientToServer is not null) { FeedRequest(flow, flow.ClientToServer.SkipGap()); }
+        if (flow.ServerToClient is not null) { FeedResponse(flow, flow.ServerToClient.SkipGap()); }
+
+        Pair(flow, key, emitted);
     }
 
     /// <summary>

@@ -382,4 +382,41 @@ public class HttpMessageParserTests
         Assert.False(p.HasPartialMessage);
     }
 
+    [Fact]
+    public void Resynchronises_to_the_next_message_after_a_gap_truncates_a_body()
+    {
+        var p = new HttpMessageParser(MessageKind.Response);
+
+        // A response whose body a lost segment cut short: the header promises 10, only 4 arrive.
+        var partial = p.Append(B("HTTP/1.1 200 OK\nContent-Length: 10\n\nABCD"));
+        Assert.Empty(partial);
+        Assert.True(p.HasPartialMessage);
+
+        // The gap is known to be unrecoverable, so the truncated message is dropped...
+        Assert.True(p.ResyncAfterGap());
+        Assert.False(p.HasPartialMessage);
+
+        // ...and the next whole response, delivered after the skipped hole, parses cleanly rather
+        // than being swallowed as the lost message's missing body bytes.
+        var done = p.Append(B("HTTP/1.1 404 Not Found\nContent-Length: 2\n\nNo"));
+        var m = Assert.Single(done);
+        Assert.Equal(404, m.StatusCode);
+        Assert.Equal("No", Body(m));
+    }
+
+    [Fact]
+    public void Resynchronises_past_leading_wreckage_to_the_next_start_line()
+    {
+        var p = new HttpMessageParser(MessageKind.Response);
+        p.Append(B("HTTP/1.1 200 OK\nContent-Length: 100\n\nonly some of the body arrived"));
+        p.ResyncAfterGap();
+
+        // The released bytes begin mid-body — the tail of the lost message — and run straight
+        // into the next response with no clean boundary first. Resync must scan past the wreckage.
+        var done = p.Append(B("the rest of the lost body\nHTTP/1.1 500 Server Error\nContent-Length: 3\n\nerr"));
+        var m = Assert.Single(done);
+        Assert.Equal(500, m.StatusCode);
+        Assert.Equal("err", Body(m));
+    }
+
 }

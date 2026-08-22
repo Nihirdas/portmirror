@@ -25,10 +25,24 @@ public sealed class AgentOptions
     /// <summary>Begin the packet-capture (body) feed at startup. Requires Windows + elevation.</summary>
     public bool PacketCaptureEnabled { get; set; }
 
-    /// <summary>Seconds of capture per pktmon cycle before converting and processing.</summary>
-    public int PacketIntervalSeconds { get; set; } = 5;
+    /// <summary>
+    /// Length of each pktmon capture window, in seconds, before it is converted and processed.
+    /// This is the latency-versus-completeness knob. Each window boundary is a brief capture
+    /// restart, and a connection with bytes in flight across one loses them; a longer window means
+    /// fewer boundaries, so fewer connections are cut — at the cost of taking that long to surface.
+    /// (What is stranded behind a boundary is then recovered on the next window, so the loss is
+    /// at most the one message straddling each boundary rather than the rest of the connection.)
+    /// Set to 0 or less for batch mode: a single continuous capture, processed only when the feed
+    /// stops. Batch mode has no boundaries at all, so it drops nothing, but shows nothing until
+    /// stop — pktmon cannot convert a running capture.
+    /// </summary>
+    public int PacketIntervalSeconds { get; set; } = 30;
 
-    /// <summary>Circular capture file size cap, in MB, per cycle.</summary>
+    /// <summary>
+    /// Circular capture file size cap, in MB, per window. In batch mode this bounds the single
+    /// continuous capture, so it is also the amount of history retained before the oldest is
+    /// overwritten.
+    /// </summary>
     public int PacketFileSizeMb { get; set; } = 50;
 
     /// <summary>Ports the agent should treat as servers, to classify direction and scope capture.</summary>

@@ -44,6 +44,13 @@ public sealed class PcapProcessor
         return exchanges;
     }
 
+    /// <summary>
+    /// Releases flows stranded behind a capture gap, surfacing what can be recovered while leaving
+    /// the flows open. Call this once after each <see cref="Process"/>: the whole file is in by
+    /// then, so any remaining hole is a gap between capture windows that will never be filled.
+    /// </summary>
+    public IReadOnlyList<Exchange> RecoverStalled() => _reassembler.RecoverStalled();
+
     /// <summary>Closes every open flow, surfacing any partial exchanges still in flight.</summary>
     public IReadOnlyList<Exchange> Flush() => _reassembler.Flush();
 }

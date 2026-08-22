@@ -351,4 +351,60 @@ public class TcpFlowReassemblerTests
         Assert.Equal(CaptureDirection.Unknown, Assert.Single(got).Direction);
     }
 
+    [Fact]
+    public void Recovers_the_next_transaction_stranded_behind_a_capture_gap()
+    {
+        var r = New();
+        const string req1 = "GET /1 HTTP/1.1\r\nHost: h\r\n\r\n";
+        const string res1 = "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nA";
+        const string req2 = "GET /2 HTTP/1.1\r\nHost: h\r\n\r\n";
+        const string res2 = "HTTP/1.1 404 Not Found\r\nContent-Length: 1\r\n\r\nB";
+        var got = new List<Exchange>();
+
+        // The handshake fixes both initial sequence numbers.
+        r.Accept(Seg(Client, 5000, Server, 80, 1000, "", syn: true));
+        r.Accept(Seg(Server, 80, Client, 5000, 5000, "", syn: true, ack: true));
+
+        // The first transaction is captured whole and pairs.
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1001, req1)));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 5001, res1)));
+        Assert.Single(got);
+
+        // A capture restart drops the bytes in flight: the next request and response each arrive
+        // 50 bytes further on than their direction expects, so both sit buffered behind a hole
+        // and nothing is emitted — this is the keep-alive stranding that killed the yield.
+        var stranded = new List<Exchange>();
+        stranded.AddRange(r.Accept(Seg(Client, 5000, Server, 80, (uint)(1001 + req1.Length + 50), req2)));
+        stranded.AddRange(r.Accept(Seg(Server, 80, Client, 5000, (uint)(5001 + res1.Length + 50), res2)));
+        Assert.Empty(stranded);
+
+        // Recovery skips the hole in both directions and releases the stranded transaction.
+        var recovered = r.RecoverStalled();
+        var ex = Assert.Single(recovered);
+        Assert.Equal("/2", ex.Url);
+        Assert.Equal(404, ex.StatusCode);
+        Assert.Equal("B", Body(ex.Response));
+        Assert.False(ex.Partial);
+    }
+
+    [Fact]
+    public void A_flow_making_normal_progress_is_left_untouched_by_recovery()
+    {
+        var r = New();
+        const string req1 = "GET /1 HTTP/1.1\r\nHost: h\r\n\r\n";
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1, req1)));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 1, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nA")));
+        Assert.Single(got);
+
+        // The head of a second request, contiguous with the stream: nothing is buffered behind a
+        // gap, it simply has not all arrived yet.
+        r.Accept(Seg(Client, 5000, Server, 80, (uint)(1 + req1.Length), "POST /2 HTTP/1.1\r\nContent-Length: 5\r\n\r\nab"));
+
+        // Recovery must not fire on it — an in-progress message is not a stranded one, and
+        // flushing it here would emit a bogus partial and desync the queues.
+        Assert.Empty(r.RecoverStalled());
+    }
+
 }

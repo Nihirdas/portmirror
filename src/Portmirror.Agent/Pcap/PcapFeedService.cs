@@ -81,7 +81,15 @@ public sealed class PcapFeedService
             _running = true;
             _lastError = null;
             _loop = Task.Run(() => RunLoopAsync(_cts.Token));
-            _logger.LogInformation("Packet feed started (pktmon, {Interval}s intervals).", _options.PacketIntervalSeconds);
+            if (_options.PacketIntervalSeconds <= 0)
+            {
+                _logger.LogInformation("Packet feed started (pktmon, batch mode — exchanges surface on stop).");
+            }
+            else
+            {
+                _logger.LogInformation("Packet feed started (pktmon, {Interval}s windows).", _options.PacketIntervalSeconds);
+            }
+
             return null;
         }
     }
@@ -133,15 +141,26 @@ public sealed class PcapFeedService
         SafeRun("filter remove", "filter remove");
         SafeRun("filter add", FilterArgs());
 
+        var interval = _options.PacketIntervalSeconds;
+        var batch = interval <= 0;
+
         TryDelete(etlA);
         var current = etlA;
         StartCapture(current);
 
         try
         {
-            while (!ct.IsCancellationRequested)
+            // Batch mode: one continuous capture with no interval boundaries, so nothing in
+            // flight is ever cut. It surfaces only once the feed stops (the finally below), since
+            // pktmon cannot convert a still-running capture.
+            if (batch)
             {
-                await DelayQuietly(TimeSpan.FromSeconds(Math.Max(1, _options.PacketIntervalSeconds)), ct);
+                await DelayUntilCancelled(ct);
+            }
+
+            while (!batch && !ct.IsCancellationRequested)
+            {
+                await DelayQuietly(TimeSpan.FromSeconds(Math.Max(1, interval)), ct);
                 if (ct.IsCancellationRequested)
                 {
                     break;
@@ -161,6 +180,11 @@ public sealed class PcapFeedService
                     // the gap.
                     await ProcessFileAsync(processor, closed, pcap, ct);
                     TryDelete(closed);
+
+                    // A connection that spanned this window's stop/start lost the bytes in flight;
+                    // release whatever came after the hole so it is not stranded on that flow
+                    // until the connection finally closes.
+                    AppendAll(processor.RecoverStalled());
                 }
                 catch (OperationCanceledException)
                 {
@@ -336,6 +360,18 @@ public sealed class PcapFeedService
         try
         {
             await Task.Delay(delay, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected on stop.
+        }
+    }
+
+    private static async Task DelayUntilCancelled(CancellationToken ct)
+    {
+        try
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
         }
         catch (OperationCanceledException)
         {
