@@ -135,6 +135,8 @@ public sealed class PortmirrorHttpModule : IHttpModule
         var response = ctx.Response;
         response.Clear();
         response.StatusCode = decision.Status;
+        // Otherwise IIS replaces a 4xx/5xx body with its own generic error page.
+        response.TrySkipIisCustomErrors = true;
         response.ContentType = string.IsNullOrEmpty(decision.ContentType) ? "text/plain" : decision.ContentType;
         if (!string.IsNullOrEmpty(decision.Body))
         {

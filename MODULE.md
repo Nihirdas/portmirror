@@ -37,6 +37,14 @@ Per application (simplest):
 Adding the module recycles the application once. After that, everything is controlled by the file
 below with **no further recycle**.
 
+   > **Required: binding redirects.** The module depends on `System.Text.Json`, whose dependency
+   > chain needs assembly binding redirects on .NET Framework 4.8. Without them the module fails
+   > to load **silently** — it captures nothing and injects nothing, while the app keeps serving
+   > normally. Merge the `<runtime><assemblyBinding>` block from
+   > [`deploy/module.web.config.example`](deploy/module.web.config.example) into the app's
+   > `web.config` alongside the module registration. (A future build may merge the dependencies
+   > into the module assembly to remove this step.)
+
 For a whole server, register the same `<add>` under `<system.webServer><modules>` in
 `applicationHost.config` and place the assembly where the worker can load it (e.g. the GAC).
 

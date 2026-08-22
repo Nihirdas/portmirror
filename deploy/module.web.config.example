@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Merge these two blocks into the target application's own web.config to install the module:
+   1) system.webServer/modules — registers the module
+   2) runtime/assemblyBinding — REQUIRED. The module depends on System.Text.Json, whose
+      dependency chain needs binding redirects on .NET Framework 4.8, or the module silently
+      fails to load and captures nothing. Versions match the shipped module; keep them in sync.
+-->
+<configuration>
+  <system.webServer>
+    <modules>
+      <add name="Portmirror" type="Portmirror.IisModule.PortmirrorHttpModule, Portmirror.IisModule" />
+    </modules>
+    <validation validateIntegratedModeConfiguration="false" />
+  </system.webServer>
+  <runtime>
+    <assemblyBinding xmlns="urn:schemas-microsoft-com:asm.v1">
+      <dependentAssembly><assemblyIdentity name="System.Text.Json" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" /><bindingRedirect oldVersion="0.0.0.0-8.0.0.5" newVersion="8.0.0.5" /></dependentAssembly>
+      <dependentAssembly><assemblyIdentity name="System.Text.Encodings.Web" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" /><bindingRedirect oldVersion="0.0.0.0-8.0.0.0" newVersion="8.0.0.0" /></dependentAssembly>
+      <dependentAssembly><assemblyIdentity name="System.Runtime.CompilerServices.Unsafe" publicKeyToken="b03f5f7f11d50a3a" culture="neutral" /><bindingRedirect oldVersion="0.0.0.0-6.0.0.0" newVersion="6.0.0.0" /></dependentAssembly>
+      <dependentAssembly><assemblyIdentity name="System.Memory" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" /><bindingRedirect oldVersion="0.0.0.0-4.0.1.2" newVersion="4.0.1.2" /></dependentAssembly>
+      <dependentAssembly><assemblyIdentity name="System.Buffers" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" /><bindingRedirect oldVersion="0.0.0.0-4.0.3.0" newVersion="4.0.3.0" /></dependentAssembly>
+      <dependentAssembly><assemblyIdentity name="System.Numerics.Vectors" publicKeyToken="b03f5f7f11d50a3a" culture="neutral" /><bindingRedirect oldVersion="0.0.0.0-4.1.4.0" newVersion="4.1.4.0" /></dependentAssembly>
+      <dependentAssembly><assemblyIdentity name="System.Threading.Tasks.Extensions" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" /><bindingRedirect oldVersion="0.0.0.0-4.2.0.1" newVersion="4.2.0.1" /></dependentAssembly>
+      <dependentAssembly><assemblyIdentity name="Microsoft.Bcl.AsyncInterfaces" publicKeyToken="cc7b13ffcd2ddd51" culture="neutral" /><bindingRedirect oldVersion="0.0.0.0-8.0.0.0" newVersion="8.0.0.0" /></dependentAssembly>
+    </assemblyBinding>
+  </runtime>
+</configuration>
