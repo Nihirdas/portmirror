@@ -116,6 +116,9 @@
   h1 em{font-style:normal; color:var(--signal)}
   .hero .lede{font-size:clamp(1.05rem,2vw,1.22rem); max-width:56ch}
   .hero-cta{display:flex; flex-wrap:wrap; gap:12px; margin-top:32px}
+  .hero-dl{margin:14px 0 0; font-size:.86rem; color:var(--ink-dim)}
+  .hero-dl .mono{font-family:var(--mono)}
+  .hero-dl a{color:var(--signal)}
   .hero-meta{
     display:flex; flex-wrap:wrap; gap:8px 22px; margin-top:26px;
     font-family:var(--mono); font-size:.78rem; color:var(--ink-faint)
@@ -404,9 +407,14 @@
         running application, and you never recycle an application pool to see what happened.
       </p>
       <div class="hero-cta fx" style="--d:.24s">
-        <a class="btn btn-primary" href="https://github.com/Nihirdas/portmirror">View the source</a>
+        <a class="btn btn-primary" href="https://github.com/Nihirdas/portmirror/releases/latest">Download for Windows</a>
+        <a class="btn btn-ghost" href="https://github.com/Nihirdas/portmirror">View the source</a>
         <a class="btn btn-ghost" href="#contribute">Help build it</a>
       </div>
+      <p class="hero-dl fx" style="--d:.28s">
+        v0.1.0 &middot; the capture agent, self-contained &middot; no install, run it elevated and open
+        <span class="mono">:9099</span>. <a href="https://github.com/Nihirdas/portmirror/releases/latest">All releases &rarr;</a>
+      </p>
       <div class="hero-meta fx" style="--d:.32s">
         <span>MIT licensed, commercial use included</span>
         <span>Runs on your machine</span>
