@@ -237,8 +237,9 @@ public sealed class PcapFeedService
         }
 
         var bytes = await File.ReadAllBytesAsync(pcap, ct);
+        var produced = processor.Process(bytes);
         Interlocked.Exchange(ref _packetsSeen, processor.PacketsSeen);
-        AppendAll(processor.Process(bytes));
+        AppendAll(produced);
     }
 
     private void AppendAll(IReadOnlyList<Exchange> exchanges)
@@ -257,17 +258,27 @@ public sealed class PcapFeedService
         }
     }
 
-    private string FilterArgs()
+    private string FilterArgs() => BuildFilterArgs(_options.PacketServerPorts);
+
+    /// <summary>
+    /// The pktmon <c>filter add</c> arguments for the configured server ports. Pure so it can be
+    /// tested without a running capture.
+    /// </summary>
+    internal static string BuildFilterArgs(int[]? ports)
     {
-        var ports = _options.PacketServerPorts;
         if (ports is null || ports.Length == 0)
         {
-            // No hint: capture all TCP. (pktmon's default with no filter is all packets.)
+            // No hint: capture all TCP. Broad, but on a busy host the volume can overrun pktmon
+            // (dropped packets) — name a server port to scope it tightly.
             return "filter add portmirror -t TCP";
         }
 
-        // pktmon takes one port per filter; the first named port is the common case.
-        return $"filter add portmirror -t TCP -p {ports[0]}";
+        // Filter on the port ALONE. Combining a transport type with a port in one pktmon filter
+        // (`-t TCP -p <port>`) captures almost nothing — measured on Server 2022 — whereas the
+        // port on its own captures the whole conversation. A named port keeps the capture small,
+        // which is what avoids the drops that scale with volume. (pktmon takes one port per
+        // filter; the first named port is the common case.)
+        return $"filter add portmirror -p {ports[0]}";
     }
 
     /// <summary>
