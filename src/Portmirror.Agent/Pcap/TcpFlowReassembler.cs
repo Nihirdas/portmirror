@@ -41,14 +41,22 @@ public sealed class TcpFlowReassembler
 
     private readonly Redactor _redactor;
     private readonly HashSet<int> _serverPorts;
+    private readonly HashSet<string> _localIps;
     private readonly int _maxFlows;
     private readonly Dictionary<FlowKey, Flow> _flows = new();
     private readonly LinkedList<FlowKey> _order = new();   // insertion order, for eviction
 
-    public TcpFlowReassembler(Redactor redactor, IEnumerable<int>? serverPorts = null, int maxFlows = 4096)
+    public TcpFlowReassembler(
+        Redactor redactor,
+        IEnumerable<int>? serverPorts = null,
+        IEnumerable<string>? localIps = null,
+        int maxFlows = 4096)
     {
         _redactor = redactor;
         _serverPorts = serverPorts is null ? new HashSet<int>() : new HashSet<int>(serverPorts);
+        _localIps = localIps is null
+            ? new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            : new HashSet<string>(localIps, StringComparer.OrdinalIgnoreCase);
         _maxFlows = maxFlows < 1 ? 1 : maxFlows;
     }
 
@@ -257,12 +265,33 @@ public sealed class TcpFlowReassembler
         _order.Remove(key);
     }
 
+    /// <summary>
+    /// Outbound when the local host initiated the connection (it is the flow's client), inbound
+    /// when the local host served it (it is the server). Unknown when neither side is local, which
+    /// happens only if the capture sees traffic between two other hosts.
+    /// </summary>
+    private CaptureDirection DirectionOf(Flow flow)
+    {
+        if (_localIps.Count == 0)
+        {
+            return CaptureDirection.Unknown;
+        }
+
+        var clientLocal = flow.Client.Address is not null && _localIps.Contains(flow.Client.Address.ToString());
+        var serverLocal = flow.Server.Address is not null && _localIps.Contains(flow.Server.Address.ToString());
+
+        if (clientLocal && !serverLocal) { return CaptureDirection.Outbound; }
+        if (serverLocal && !clientLocal) { return CaptureDirection.Inbound; }
+        return CaptureDirection.Unknown;
+    }
+
     private Exchange BuildExchange(Flow flow, FlowKey key, ParsedMessage? request, ParsedMessage? response, bool partial)
     {
         return new Exchange
         {
             CorrelationId = $"{key}#{flow.PairIndex++}",
             Tier = CaptureTier.PacketCapture,
+            Direction = DirectionOf(flow),
             Partial = partial,
             ClientIp = flow.Client.Address?.ToString(),
             Verb = request?.Method,

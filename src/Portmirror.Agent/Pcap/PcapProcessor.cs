@@ -13,8 +13,8 @@ public sealed class PcapProcessor
 {
     private readonly TcpFlowReassembler _reassembler;
 
-    public PcapProcessor(Redactor redactor, IEnumerable<int>? serverPorts = null)
-        => _reassembler = new TcpFlowReassembler(redactor, serverPorts);
+    public PcapProcessor(Redactor redactor, IEnumerable<int>? serverPorts = null, IEnumerable<string>? localIps = null)
+        => _reassembler = new TcpFlowReassembler(redactor, serverPorts, localIps);
 
     public long PacketsSeen { get; private set; }
     public long SegmentsSeen { get; private set; }

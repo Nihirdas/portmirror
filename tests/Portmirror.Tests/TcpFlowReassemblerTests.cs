@@ -308,4 +308,47 @@ public class TcpFlowReassemblerTests
         Assert.Equal("/0", partials[0].Url);       // oldest flushed first
     }
 
+
+    // --- Direction tagging (inbound vs outbound), from the local host's IPs ---
+
+    private static TcpFlowReassembler WithLocal(params string[] localIps) =>
+        new(new Redactor(true), serverPorts: new[] { 80 }, localIps: localIps);
+
+    [Fact]
+    public void An_inbound_request_is_tagged_inbound()
+    {
+        // The local host is 10.0.0.2, the server side of the flow — someone called in.
+        var r = WithLocal(Server);
+        var got = new List<Exchange>();
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1, "GET /in HTTP/1.1\r\n\r\n")));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 1, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")));
+
+        Assert.Equal(CaptureDirection.Inbound, Assert.Single(got).Direction);
+    }
+
+    [Fact]
+    public void An_outbound_call_is_tagged_outbound()
+    {
+        // The local host is 10.0.0.1, the client side — it made a server-to-server call out.
+        var r = WithLocal(Client);
+        var got = new List<Exchange>();
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1, "POST /downstream HTTP/1.1\r\nContent-Length: 2\r\n\r\nhi")));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 1, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")));
+
+        var ex = Assert.Single(got);
+        Assert.Equal(CaptureDirection.Outbound, ex.Direction);
+        Assert.Equal("/downstream", ex.Url);
+    }
+
+    [Fact]
+    public void Direction_is_unknown_when_no_local_ips_are_known()
+    {
+        var r = New();   // no localIps
+        var got = new List<Exchange>();
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1, "GET /x HTTP/1.1\r\n\r\n")));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 1, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")));
+
+        Assert.Equal(CaptureDirection.Unknown, Assert.Single(got).Direction);
+    }
+
 }

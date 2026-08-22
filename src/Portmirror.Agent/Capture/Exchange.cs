@@ -16,6 +16,20 @@ public enum CaptureTier
     IisModule
 }
 
+/// <summary>Whether the local host received the request (inbound) or made it (outbound).</summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum CaptureDirection
+{
+    /// <summary>Direction could not be determined (e.g. neither endpoint is the local host).</summary>
+    Unknown,
+
+    /// <summary>A request served by the local host — someone called in.</summary>
+    Inbound,
+
+    /// <summary>A request the local host made to another server — a server-to-server call out.</summary>
+    Outbound
+}
+
 /// <summary>One half of an exchange: headers plus an optional body.</summary>
 public sealed class HttpMessage
 {
@@ -67,6 +81,9 @@ public sealed class Exchange
     public string? QueueName { get; set; }
 
     public CaptureTier Tier { get; set; } = CaptureTier.EtwMetadata;
+
+    /// <summary>Inbound (served here) or outbound (a server-to-server call this host made).</summary>
+    public CaptureDirection Direction { get; set; } = CaptureDirection.Unknown;
 
     /// <summary>True when the exchange was flushed on idle timeout rather than seeing a terminal event.</summary>
     public bool Partial { get; set; }

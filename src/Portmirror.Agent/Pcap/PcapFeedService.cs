@@ -117,7 +117,7 @@ public sealed class PcapFeedService
 
     private async Task RunLoopAsync(CancellationToken ct)
     {
-        var processor = new PcapProcessor(_redactor, _options.PacketServerPorts);
+        var processor = new PcapProcessor(_redactor, _options.PacketServerPorts, LocalIpv4Addresses());
         var workDir = Path.Combine(Path.GetTempPath(), "portmirror-pcap");
         Directory.CreateDirectory(workDir);
 
@@ -244,6 +244,34 @@ public sealed class PcapFeedService
 
         // pktmon takes one port per filter; the first named port is the common case.
         return $"filter add portmirror -t TCP -p {ports[0]}";
+    }
+
+    /// <summary>
+    /// The host's own IPv4 addresses, used to tell an outbound call (this host is the client) from
+    /// an inbound one (this host is the server).
+    /// </summary>
+    private static IReadOnlyCollection<string> LocalIpv4Addresses()
+    {
+        var ips = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            foreach (var nic in System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces())
+            {
+                foreach (var addr in nic.GetIPProperties().UnicastAddresses)
+                {
+                    if (addr.Address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+                    {
+                        ips.Add(addr.Address.ToString());
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // If enumeration fails, direction stays Unknown rather than misreported.
+        }
+
+        return ips;
     }
 
     private bool PktmonAvailable()

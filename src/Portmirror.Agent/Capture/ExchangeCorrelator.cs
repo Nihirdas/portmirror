@@ -58,7 +58,8 @@ public sealed class ExchangeCorrelator
                 {
                     CorrelationId = signal.CorrelationId,
                     StartedUtc = signal.TimestampUtc,
-                    Tier = CaptureTier.EtwMetadata
+                    Tier = CaptureTier.EtwMetadata,
+                    Direction = CaptureDirection.Inbound   // HTTP.SYS only sees requests served here
                 },
                 LastTouchedUtc = signal.TimestampUtc
             };

@@ -114,6 +114,7 @@ public sealed class ExchangeSender : IDisposable
         {
             CorrelationId = Guid.NewGuid().ToString("n"),
             Tier = CaptureTier.IisModule,
+            Direction = CaptureDirection.Inbound,   // the module observes requests served by this app
             StartedUtc = raw.StartedUtc,
             CompletedUtc = raw.CompletedUtc,
             DurationMs = Math.Round((raw.CompletedUtc - raw.StartedUtc).TotalMilliseconds, 3),

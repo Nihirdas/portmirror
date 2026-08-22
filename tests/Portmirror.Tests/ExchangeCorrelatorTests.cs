@@ -210,4 +210,15 @@ public class ExchangeCorrelatorTests
         Assert.Null(correlator.Accept(new EtwSignal(requestId, SignalKind.ResponseSent, T0.AddMilliseconds(10))));
         Assert.Null(correlator.Accept(new EtwSignal(requestId, SignalKind.RequestEnded, T0.AddMilliseconds(11))));
     }
+
+    [Fact]
+    public void Etw_exchanges_are_tagged_inbound()
+    {
+        var correlator = new ExchangeCorrelator();
+        correlator.Accept(new EtwSignal("d", SignalKind.RequestReceived, T0));
+        var done = correlator.Accept(new EtwSignal("d", SignalKind.ResponseSent, T0.AddMilliseconds(3), StatusCode: 200));
+
+        Assert.Equal(CaptureDirection.Inbound, done!.Direction);
+    }
+
 }
