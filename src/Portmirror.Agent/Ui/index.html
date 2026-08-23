@@ -46,6 +46,12 @@
   .verb { font-family: var(--mono); font-size: 12px; font-weight: 600; }
   .s2 { color: var(--ok); } .s3 { color: var(--accent); } .s4 { color: var(--warn); } .s5 { color: var(--err); }
   .partial { color: var(--muted); font-style: italic; }
+  .dir { font-family: var(--mono); font-size: 11px; font-weight: 600; }
+  .dir.out { color: var(--accent); }
+  .dir.in { color: var(--muted); font-weight: 400; }
+  tr.pkt td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+  .bodymark { font-family: var(--mono); font-size: 10px; color: var(--ok); border: 1px solid var(--ok);
+              border-radius: 4px; padding: 0 4px; margin-left: 6px; vertical-align: middle; }
   aside { border-left: 1px solid var(--border); padding: 14px 16px; overflow: auto;
           max-height: calc(100vh - 108px); background: var(--panel); }
   aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
@@ -72,7 +78,13 @@
   <h1>portmirror <span id="host"></span></h1>
   <span><span class="dot" id="dot"></span> <span id="state">connecting</span></span>
   <button id="toggle">Stop capture</button>
-  <input id="q" placeholder="filter url, verb, client ip" style="width: 220px">
+  <input id="q" placeholder="filter url, verb, client ip" style="width: 200px">
+  <select id="scope" title="which direction to show">
+    <option value="all">all traffic</option>
+    <option value="outbound">outbound (server-to-server)</option>
+    <option value="inbound">inbound</option>
+    <option value="bodies">bodies only</option>
+  </select>
   <select id="status">
     <option value="">any status</option>
     <option value="200">200</option><option value="301">301</option><option value="400">400</option>
@@ -81,6 +93,7 @@
   </select>
   <button id="pause">Pause</button>
   <button id="clear">Clear</button>
+  <button id="download" title="dump the whole retained session to a file">Download</button>
   <span class="grow"></span>
   <span class="stats" id="stats"></span>
 </header>
@@ -91,7 +104,7 @@
   <div class="tablewrap">
     <table>
       <thead><tr>
-        <th>time</th><th>verb</th><th>status</th><th>ms</th><th>url</th><th>client</th><th>queue</th>
+        <th>time</th><th>dir</th><th>verb</th><th>status</th><th>ms</th><th>url</th><th>client</th><th>queue</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
@@ -116,19 +129,31 @@
     const p = new URLSearchParams();
     if (el('q').value.trim()) p.set('q', el('q').value.trim());
     if (el('status').value) p.set('status', el('status').value);
+    const scope = el('scope').value;
+    if (scope === 'inbound') p.set('direction', 'Inbound');
+    else if (scope === 'outbound') p.set('direction', 'Outbound');
+    else if (scope === 'bodies') p.set('bodies', 'true');
     return p;
   }
+
+  const dirCell = (d) =>
+    d === 'Outbound' ? '<span class="dir out" title="server-to-server call out">out ↑</span>' :
+    d === 'Inbound'  ? '<span class="dir in" title="request served here">in ↓</span>' : '<span class="dir">-</span>';
+  const hasBody = (x) => (x.request && x.request.hasBody) || (x.response && x.response.hasBody);
 
   function addRow(x, prepend = true) {
     byId.set(x.id, x);
     const tr = document.createElement('tr');
     tr.dataset.id = x.id;
+    if (x.tier === 'PacketCapture' || x.tier === 'IisModule') tr.classList.add('pkt');
+    const body = hasBody(x) ? ' <span class="bodymark" title="has a captured body">body</span>' : '';
     tr.innerHTML =
       `<td>${hhmmss(x.startedUtc)}</td>` +
+      `<td>${dirCell(x.direction)}</td>` +
       `<td class="verb">${esc(x.verb || '-')}</td>` +
       `<td class="verb ${statusClass(x.statusCode)}">${x.statusCode ?? (x.partial ? '<span class="partial">open</span>' : '-')}</td>` +
       `<td>${x.durationMs != null ? x.durationMs.toFixed(1) : '-'}</td>` +
-      `<td class="url" title="${esc(x.url)}">${esc(x.url || '-')}</td>` +
+      `<td class="url" title="${esc(x.url)}">${esc(x.url || '-')}${body}</td>` +
       `<td>${esc(x.clientIp || '-')}</td>` +
       `<td>${esc(x.queueName || '-')}</td>`;
     tr.onclick = () => select(x.id);
@@ -241,7 +266,8 @@
       el('state').textContent = a.capturing ? 'capturing' : 'idle';
       el('toggle').textContent = a.capturing ? 'Stop capture' : 'Start capture';
       el('stats').textContent =
-        `${a.exchangesEmitted} exchanges · ${a.eventsSeen} etw events · ${a.retained}/${a.capacity} retained`;
+        `${a.exchangesEmitted} exchanges · ${a.retained}/${a.capacity} retained` +
+        (a.suppressedNoise ? ` · ${a.suppressedNoise} noise dropped` : '');
       const warn = !a.elevated ? 'Not running elevated — an ETW session needs administrator rights.'
                  : !a.redactionEnabled ? 'Redaction is OFF. Captured payloads may contain card data and tokens.'
                  : null;
@@ -272,8 +298,15 @@
   };
   el('pause').onclick = () => { paused = !paused; el('pause').textContent = paused ? 'Resume' : 'Pause'; };
   el('clear').onclick = async () => { await fetch('/api/exchanges', { method: 'DELETE' }); reload(); };
+  el('download').onclick = () => {
+    // Dump what is currently in view (the scope/filter narrows it); Content-Disposition on the
+    // response makes the browser save it rather than render it.
+    const p = qs(); p.set('format', 'raw');
+    window.location.href = '/api/export?' + p.toString();
+  };
   el('q').oninput = debounce(reload, 350);
   el('status').onchange = reload;
+  el('scope').onchange = reload;
 
   function debounce(fn, ms) { let t; return () => { clearTimeout(t); t = setTimeout(fn, ms); }; }
 

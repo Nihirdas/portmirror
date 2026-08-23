@@ -82,6 +82,7 @@ public static class ApiEndpoints
                 eventsSeen = capture.EventsSeen,
                 exchangesEmitted = capture.ExchangesEmitted,
                 signalsUncorrelated = capture.SignalsUncorrelated,
+                suppressedNoise = capture.SuppressedNoise,
                 retained = ring.Count,
                 capacity = ring.Capacity,
                 lastSeq = ring.LastSeq,
@@ -95,10 +96,12 @@ public static class ApiEndpoints
             long? since,
             int? limit,
             string? q,
-            int? status) =>
+            int? status,
+            string? direction,
+            bool? bodies) =>
         {
             var take = Math.Clamp(limit ?? 200, 1, 2000);
-            var filter = BuildFilter(q, status);
+            var filter = BuildFilter(q, status, direction, bodies);
 
             var found = since.HasValue
                 ? ring.Since(since.Value, take, filter)
@@ -132,6 +135,35 @@ public static class ApiEndpoints
         {
             ring.Clear();
             return Results.Json(new { cleared = true }, Json);
+        });
+
+        // Dump the whole retained session to a downloadable file, so a capture can be archived or
+        // handed to something else to read. 'raw' (default) is a flat text transcript — headers and
+        // bodies, both directions — that reads well and feeds cleanly into other tools; 'json' is the
+        // lossless structured form. The current filter (q/status/direction/bodies) narrows the dump.
+        app.MapGet("/api/export", (
+            HttpContext ctx,
+            ExchangeRing ring,
+            string? format,
+            string? q,
+            int? status,
+            string? direction,
+            bool? bodies) =>
+        {
+            var filter = BuildFilter(q, status, direction, bodies);
+            var items = ring.Latest(int.MaxValue, filter).Reverse().ToList();   // oldest first
+            var json = string.Equals(format, "json", StringComparison.OrdinalIgnoreCase);
+            var ext = json ? "json" : "txt";
+            var name = $"portmirror-{Environment.MachineName}-{DateTime.Now:yyyyMMdd-HHmmss}.{ext}";
+
+            var payload = json
+                ? JsonSerializer.Serialize(
+                    new { host = Environment.MachineName, version = Version(), count = items.Count, exchanges = items },
+                    Json)
+                : RawDump(items);
+
+            ctx.Response.Headers.ContentDisposition = $"attachment; filename=\"{name}\"";
+            return Results.Text(payload, json ? "application/json" : "text/plain; charset=utf-8");
         });
 
         // Exchanges captured out-of-process by the IIS module are posted here. They arrive already
@@ -231,13 +263,15 @@ public static class ApiEndpoints
         app.MapGet("/api/stream", StreamExchanges);
     }
 
-    private static async Task StreamExchanges(HttpContext ctx, ExchangeRing ring, long? since, string? q, int? status)
+    private static async Task StreamExchanges(
+        HttpContext ctx, ExchangeRing ring, long? since, string? q, int? status,
+        string? direction, bool? bodies)
     {
         ctx.Response.ContentType = "text/event-stream";
         ctx.Response.Headers.CacheControl = "no-cache";
         ctx.Response.Headers["X-Accel-Buffering"] = "no";
 
-        var filter = BuildFilter(q, status);
+        var filter = BuildFilter(q, status, direction, bodies);
         var cursor = since ?? ring.LastSeq;
         var ct = ctx.RequestAborted;
 
@@ -307,6 +341,57 @@ public static class ApiEndpoints
         m.DecodeError
     };
 
+    /// <summary>A flat text transcript of a set of exchanges: one block each, headers and body for
+    /// both directions. Bodies are already decompressed and redacted by the time they land here.</summary>
+    internal static string RawDump(IReadOnlyList<Capture.Exchange> items)
+    {
+        var sb = new System.Text.StringBuilder();
+        sb.Append("portmirror session export  ")
+          .Append(items.Count).Append(" exchanges  ")
+          .Append(Environment.MachineName).Append('\n');
+
+        foreach (var e in items)
+        {
+            sb.Append("\n================================================================\n")
+              .Append('#').Append(e.Seq).Append("  ").Append(e.StartedUtc.ToString("O"))
+              .Append("  [").Append(e.Tier).Append('/').Append(e.Direction).Append(']');
+            if (e.Partial) { sb.Append("  (partial)"); }
+            sb.Append('\n');
+
+            sb.Append(e.Verb ?? "-").Append(' ').Append(e.Url ?? "(no url)")
+              .Append("  ->  ").Append(e.StatusCode?.ToString() ?? "-");
+            if (e.DurationMs is not null) { sb.Append("  ").Append(e.DurationMs.Value.ToString("0.#")).Append("ms"); }
+            if (e.ClientIp is not null) { sb.Append("  client=").Append(e.ClientIp); }
+            if (e.QueueName is not null) { sb.Append("  queue=").Append(e.QueueName); }
+            sb.Append('\n');
+
+            AppendMessage(sb, "REQUEST", e.Request);
+            AppendMessage(sb, "RESPONSE", e.Response);
+        }
+
+        return sb.ToString();
+    }
+
+    private static void AppendMessage(System.Text.StringBuilder sb, string title, Capture.HttpMessage? m)
+    {
+        if (m is null) { return; }
+
+        sb.Append("---------------- ").Append(title).Append(" ----------------\n");
+        foreach (var h in m.Headers)
+        {
+            sb.Append(h.Key).Append(": ").Append(h.Value).Append('\n');
+        }
+
+        if (m.Body is not null)
+        {
+            sb.Append('\n').Append(m.Body).Append('\n');
+        }
+        else if (m.BodyFormat == "binary")
+        {
+            sb.Append("\n[binary body, ").Append(m.BodyByteCount).Append(" bytes]\n");
+        }
+    }
+
     private static object? Formatted(Capture.HttpMessage? m)
     {
         if (m?.Body is null)
@@ -321,9 +406,12 @@ public static class ApiEndpoints
         };
     }
 
-    private static Func<Capture.Exchange, bool>? BuildFilter(string? q, int? status)
+    internal static Func<Capture.Exchange, bool>? BuildFilter(
+        string? q, int? status, string? direction = null, bool? bodies = null)
     {
-        if (string.IsNullOrWhiteSpace(q) && !status.HasValue)
+        var hasDirection = Enum.TryParse<Capture.CaptureDirection>(direction, ignoreCase: true, out var wantDir);
+
+        if (string.IsNullOrWhiteSpace(q) && !status.HasValue && !hasDirection && bodies != true)
         {
             return null;
         }
@@ -333,6 +421,16 @@ public static class ApiEndpoints
         return exchange =>
         {
             if (status.HasValue && exchange.StatusCode != status.Value)
+            {
+                return false;
+            }
+
+            if (hasDirection && exchange.Direction != wantDir)
+            {
+                return false;
+            }
+
+            if (bodies == true && exchange.Request?.Body is null && exchange.Response?.Body is null)
             {
                 return false;
             }
