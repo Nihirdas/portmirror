@@ -7,8 +7,12 @@ public sealed class AgentOptions
     /// <summary>TCP port the agent's API and UI listen on.</summary>
     public int Port { get; set; } = 9099;
 
-    /// <summary>How many exchanges to retain in memory. Oldest are overwritten.</summary>
-    public int Capacity { get; set; } = 5000;
+    /// <summary>
+    /// How many exchanges to retain in memory. Oldest are overwritten once full. Body-bearing
+    /// packet/module captures are rarer than inbound metadata, so a generous ring keeps them
+    /// around long enough to be seen even on a chatty box.
+    /// </summary>
+    public int Capacity { get; set; } = 20000;
 
     /// <summary>Begin capturing as soon as the service starts.</summary>
     public bool AutoStartCapture { get; set; } = true;

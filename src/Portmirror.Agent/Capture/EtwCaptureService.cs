@@ -43,6 +43,7 @@ public sealed class EtwCaptureService : IHostedService, IDisposable
     private long _eventsSeen;
     private long _exchangesEmitted;
     private long _signalsUncorrelated;
+    private long _suppressed;
     private volatile bool _capturing;
     private bool _disposed;
 
@@ -63,6 +64,9 @@ public sealed class EtwCaptureService : IHostedService, IDisposable
     public long EventsSeen => Interlocked.Read(ref _eventsSeen);
     public long ExchangesEmitted => Interlocked.Read(ref _exchangesEmitted);
     public long SignalsUncorrelated => Interlocked.Read(ref _signalsUncorrelated);
+
+    /// <summary>Content-less connection-noise exchanges dropped rather than stored. See <see cref="Emit"/>.</summary>
+    public long SuppressedNoise => Interlocked.Read(ref _suppressed);
 
     /// <summary>
     /// Event names seen so far mapped to the payload fields they actually carry. HTTP.SYS field
@@ -249,10 +253,36 @@ public sealed class EtwCaptureService : IHostedService, IDisposable
 
         if (completed is not null)
         {
-            _ring.Append(completed);
-            Interlocked.Increment(ref _exchangesEmitted);
+            Emit(completed);
         }
     }
+
+    /// <summary>
+    /// Appends an exchange to the ring unless it is content-less connection noise. F5 and other
+    /// TCP health monitors open a socket without sending an HTTP request, so HTTP.SYS still
+    /// completes an exchange — one carrying a client address but no verb, URL or status. Those
+    /// rows tell nobody anything, and at health-check volume they fill the ring and evict the
+    /// body-bearing captures that do matter, so they are dropped here rather than stored.
+    /// </summary>
+    private void Emit(Exchange exchange)
+    {
+        if (IsContentless(exchange))
+        {
+            Interlocked.Increment(ref _suppressed);
+            return;
+        }
+
+        _ring.Append(exchange);
+        Interlocked.Increment(ref _exchangesEmitted);
+    }
+
+    /// <summary>
+    /// True when an exchange carries no HTTP request or response line at all — no verb, URL or
+    /// status. HTTP.SYS still completes these for connection-only activity such as TCP health
+    /// probes, but they hold no information worth storing.
+    /// </summary>
+    internal static bool IsContentless(Exchange e) =>
+        e.Verb is null && e.Url is null && e.StatusCode is null;
 
     /// <summary>Remembers the payload field names each event carries, for the diagnostics endpoint.</summary>
     private void RecordEventShape(TraceEvent data)
@@ -308,8 +338,7 @@ public sealed class EtwCaptureService : IHostedService, IDisposable
 
             foreach (var exchange in flushed)
             {
-                _ring.Append(exchange);
-                Interlocked.Increment(ref _exchangesEmitted);
+                Emit(exchange);
             }
         }
         catch (Exception ex)
