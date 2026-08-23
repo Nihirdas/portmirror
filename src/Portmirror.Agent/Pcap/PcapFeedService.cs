@@ -139,7 +139,10 @@ public sealed class PcapFeedService
 
         // The filter is set once for the whole session, not per cycle, so it never widens the gap.
         SafeRun("filter remove", "filter remove");
-        SafeRun("filter add", FilterArgs());
+        foreach (var command in FilterCommands())
+        {
+            SafeRun("filter add", command);
+        }
 
         var interval = _options.PacketIntervalSeconds;
         var batch = interval <= 0;
@@ -258,27 +261,37 @@ public sealed class PcapFeedService
         }
     }
 
-    private string FilterArgs() => BuildFilterArgs(_options.PacketServerPorts);
+    private IReadOnlyList<string> FilterCommands() => BuildFilterCommands(_options.PacketServerPorts);
 
     /// <summary>
-    /// The pktmon <c>filter add</c> arguments for the configured server ports. Pure so it can be
-    /// tested without a running capture.
+    /// The pktmon <c>filter add</c> commands for the configured server ports — one per port, which
+    /// pktmon ORs together. Pure so it can be tested without a running capture.
     /// </summary>
-    internal static string BuildFilterArgs(int[]? ports)
+    internal static IReadOnlyList<string> BuildFilterCommands(int[]? ports)
     {
         if (ports is null || ports.Length == 0)
         {
             // No hint: capture all TCP. Broad, but on a busy host the volume can overrun pktmon
-            // (dropped packets) — name a server port to scope it tightly.
-            return "filter add portmirror -t TCP";
+            // (dropped packets) — name the server ports to scope it tightly.
+            return new[] { "filter add portmirror -t TCP" };
         }
 
-        // Filter on the port ALONE. Combining a transport type with a port in one pktmon filter
-        // (`-t TCP -p <port>`) captures almost nothing — measured on Server 2022 — whereas the
-        // port on its own captures the whole conversation. A named port keeps the capture small,
-        // which is what avoids the drops that scale with volume. (pktmon takes one port per
-        // filter; the first named port is the common case.)
-        return $"filter add portmirror -p {ports[0]}";
+        // One filter per port, on the port ALONE. Combining a transport type with a port in one
+        // pktmon filter (`-t TCP -p <port>`) captures almost nothing — measured on Server 2022 —
+        // whereas the port on its own captures the whole conversation. Scoping to just the ports of
+        // interest keeps the capture small, which is what avoids the drops that scale with volume:
+        // a busy all-TCP capture overruns pktmon's buffer and loses the very traffic being chased.
+        var commands = new List<string>();
+        var seen = new HashSet<int>();
+        foreach (var port in ports)
+        {
+            if (port > 0 && seen.Add(port))
+            {
+                commands.Add($"filter add portmirror{port} -p {port}");
+            }
+        }
+
+        return commands.Count > 0 ? commands : new[] { "filter add portmirror -t TCP" };
     }
 
     /// <summary>

@@ -51,6 +51,12 @@ public sealed class AgentOptions
     /// </summary>
     public int PacketFileSizeMb { get; set; } = 50;
 
-    /// <summary>Ports the agent should treat as servers, to classify direction and scope capture.</summary>
+    /// <summary>
+    /// Ports the agent should treat as servers, to classify direction and scope the capture.
+    /// Each port gets its own pktmon filter (they are ORed), so name every downstream you care
+    /// about — e.g. a coordinator and a token service. Scoping matters for completeness, not just
+    /// tidiness: an unscoped all-TCP capture on a busy host overruns pktmon and drops the very
+    /// packets being chased, whereas a capture narrowed to a couple of ports stays whole.
+    /// </summary>
     public int[]? PacketServerPorts { get; set; }
 }

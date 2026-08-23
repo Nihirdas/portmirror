@@ -11,22 +11,35 @@ public class PcapFeedServiceTests
         // Combining `-t TCP` with `-p <port>` in one pktmon filter captures almost nothing on
         // Server 2022 (measured); the port on its own captures the whole conversation. Guard
         // against the transport type creeping back in.
-        var args = PcapFeedService.BuildFilterArgs(new[] { 8080 });
+        var cmds = PcapFeedService.BuildFilterCommands(new[] { 8080 });
 
-        Assert.Equal("filter add portmirror -p 8080", args);
-        Assert.DoesNotContain("-t TCP", args);
+        Assert.Equal(new[] { "filter add portmirror8080 -p 8080" }, cmds);
+        Assert.DoesNotContain("-t TCP", cmds[0]);
     }
 
     [Fact]
-    public void The_first_named_port_is_used()
+    public void Every_named_port_gets_its_own_filter()
     {
-        Assert.Equal("filter add portmirror -p 9000", PcapFeedService.BuildFilterArgs(new[] { 9000, 9001 }));
+        // pktmon takes one port per filter and ORs them, so scoping to several downstreams
+        // (e.g. coordinator and STS) needs one filter each — the first-port-only behaviour
+        // silently dropped every other downstream.
+        var cmds = PcapFeedService.BuildFilterCommands(new[] { 5202, 1010 });
+
+        Assert.Equal(new[] { "filter add portmirror5202 -p 5202", "filter add portmirror1010 -p 1010" }, cmds);
+    }
+
+    [Fact]
+    public void Duplicate_and_invalid_ports_are_dropped()
+    {
+        var cmds = PcapFeedService.BuildFilterCommands(new[] { 5202, 5202, 0, -1 });
+
+        Assert.Equal(new[] { "filter add portmirror5202 -p 5202" }, cmds);
     }
 
     [Fact]
     public void With_no_named_port_it_captures_all_tcp()
     {
-        Assert.Equal("filter add portmirror -t TCP", PcapFeedService.BuildFilterArgs(null));
-        Assert.Equal("filter add portmirror -t TCP", PcapFeedService.BuildFilterArgs(System.Array.Empty<int>()));
+        Assert.Equal(new[] { "filter add portmirror -t TCP" }, PcapFeedService.BuildFilterCommands(null));
+        Assert.Equal(new[] { "filter add portmirror -t TCP" }, PcapFeedService.BuildFilterCommands(System.Array.Empty<int>()));
     }
 }
