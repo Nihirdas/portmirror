@@ -16,4 +16,10 @@
     <ProjectReference Include="..\..\src\Portmirror.Agent\Portmirror.Agent.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="fixtures\keepalive-compall.pcapng">
+      <LogicalName>keepalive-compall.pcapng</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
 </Project>
