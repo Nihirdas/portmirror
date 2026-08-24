@@ -41,7 +41,7 @@ public class TcpFlowReassemblerTests
 
         var ex = Assert.Single(got);
         Assert.Equal("GET", ex.Verb);
-        Assert.Equal("/orders", ex.Url);
+        Assert.Equal("http://h/orders", ex.Url);
         Assert.Equal(200, ex.StatusCode);
         Assert.Equal(CaptureTier.PacketCapture, ex.Tier);
         Assert.Equal(Client, ex.ClientIp);
@@ -119,10 +119,10 @@ public class TcpFlowReassemblerTests
         got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, (uint)(1 + res1.Length), res2)));
 
         Assert.Equal(2, got.Count);
-        Assert.Equal("/1", got[0].Url);
+        Assert.Equal("http://h/1", got[0].Url);
         Assert.Equal(200, got[0].StatusCode);
         Assert.Equal("A", Body(got[0].Response));
-        Assert.Equal("/2", got[1].Url);
+        Assert.Equal("http://h/2", got[1].Url);
         Assert.Equal(404, got[1].StatusCode);
         Assert.Equal("B", Body(got[1].Response));
     }
@@ -154,7 +154,7 @@ public class TcpFlowReassemblerTests
         var closed = r.CloseFlow(key);
 
         var ex = Assert.Single(closed);
-        Assert.Equal("/lonely", ex.Url);
+        Assert.Equal("http://h/lonely", ex.Url);
         Assert.True(ex.Partial);
         Assert.NotNull(ex.Request);
         Assert.Null(ex.Response);
@@ -174,7 +174,7 @@ public class TcpFlowReassemblerTests
         Assert.Equal(0, r.FlowCount);   // flow torn down
         var ex = Assert.Single(got);
         Assert.True(ex.Partial);        // request never answered
-        Assert.Equal("/x", ex.Url);
+        Assert.Equal("http://h/x", ex.Url);
     }
 
     [Fact]
@@ -215,7 +215,7 @@ public class TcpFlowReassemblerTests
 
         var ex = Assert.Single(got);
         Assert.Equal("GET", ex.Verb);
-        Assert.Equal("/p", ex.Url);
+        Assert.Equal("http://h/p", ex.Url);
         Assert.Equal(200, ex.StatusCode);
         Assert.Equal("abc", Body(ex.Response));
         Assert.Equal("text/plain", ex.Response!.ContentType);
@@ -241,9 +241,9 @@ public class TcpFlowReassemblerTests
         got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, (uint)(2000 + res1.Length), res2)));
 
         Assert.Equal(2, got.Count);
-        Assert.Equal("/a", got[0].Url);
+        Assert.Equal("http://h/a", got[0].Url);
         Assert.Equal("abc", Body(got[0].Response));   // GET kept its body
-        Assert.Equal("/b", got[1].Url);
+        Assert.Equal("http://h/b", got[1].Url);
         Assert.Equal("HEAD", got[1].Verb);
         Assert.Null(Body(got[1].Response));            // HEAD framed body-less, not a 500-byte phantom
     }
@@ -265,8 +265,8 @@ public class TcpFlowReassemblerTests
         got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 9001, "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nB")));
 
         var urls = got.Where(e => e.Url is not null).Select(e => e.Url).ToList();
-        Assert.Contains("/first", urls);
-        Assert.Contains("/second", urls);   // the second connection was NOT dropped
+        Assert.Contains("http://h/first", urls);
+        Assert.Contains("http://h/second", urls);   // the second connection was NOT dropped
     }
 
     [Fact]
@@ -281,7 +281,7 @@ public class TcpFlowReassemblerTests
         got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2001, "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n")));
 
         var ex = Assert.Single(got);
-        Assert.Equal("/x", ex.Url);
+        Assert.Equal("http://h/x", ex.Url);
         Assert.False(ex.Partial);
     }
 
@@ -305,7 +305,7 @@ public class TcpFlowReassemblerTests
 
         var partials = got.Where(e => e.Partial && e.Request is not null && e.Response is null).ToList();
         Assert.NotEmpty(partials);                 // bounding kicked in
-        Assert.Equal("/0", partials[0].Url);       // oldest flushed first
+        Assert.Equal("http://h/0", partials[0].Url);       // oldest flushed first
     }
 
 
@@ -381,7 +381,7 @@ public class TcpFlowReassemblerTests
         // Recovery skips the hole in both directions and releases the stranded transaction.
         var recovered = r.RecoverStalled();
         var ex = Assert.Single(recovered);
-        Assert.Equal("/2", ex.Url);
+        Assert.Equal("http://h/2", ex.Url);
         Assert.Equal(404, ex.StatusCode);
         Assert.Equal("B", Body(ex.Response));
         Assert.False(ex.Partial);
@@ -422,8 +422,8 @@ public class TcpFlowReassemblerTests
         // never a confident mispair onto the orphaned body (B).
         var complete = got.Where(e => !e.Partial).ToList();
         Assert.Equal(2, complete.Count);
-        Assert.Equal("A", Body(complete.Single(e => e.Url == "/0").Response));
-        Assert.Equal("C", Body(complete.Single(e => e.Url == "/2").Response));
+        Assert.Equal("A", Body(complete.Single(e => e.Url == "http://h/0").Response));
+        Assert.Equal("C", Body(complete.Single(e => e.Url == "http://h/2").Response));
 
         // The one orphaned response (B, the answer to the dropped request) surfaces as a
         // response-only partial — surfaced, not mispaired, not lost.

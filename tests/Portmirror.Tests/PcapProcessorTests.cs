@@ -25,7 +25,7 @@ public class PcapProcessorTests
 
         var ex = Assert.Single(got);
         Assert.Equal("GET", ex.Verb);
-        Assert.Equal("/p", ex.Url);
+        Assert.Equal("http://h/p", ex.Url);
         Assert.Equal(200, ex.StatusCode);
         Assert.Equal("abc", ex.Response!.Body);
         Assert.True(processor.PacketsSeen >= 2);
@@ -51,7 +51,7 @@ public class PcapProcessorTests
         var got = processor.Process(file2);
 
         var ex = Assert.Single(got);
-        Assert.Equal("/split", ex.Url);
+        Assert.Equal("http://h/split", ex.Url);
         Assert.Equal("ok", ex.Response!.Body);
     }
 
@@ -84,7 +84,7 @@ public class PcapProcessorTests
         var recovered = processor.RecoverStalled();
 
         var ex = Assert.Single(recovered);
-        Assert.Equal("/2", ex.Url);
+        Assert.Equal("http://h/2", ex.Url);
         Assert.Equal("B", ex.Response!.Body);
         Assert.False(ex.Partial);
     }
@@ -109,7 +109,7 @@ public class PcapProcessorTests
 
         var flushed = processor.Flush();
         var ex = Assert.Single(flushed);
-        Assert.Equal("/lonely", ex.Url);
+        Assert.Equal("http://h/lonely", ex.Url);
         Assert.True(ex.Partial);
     }
 }
