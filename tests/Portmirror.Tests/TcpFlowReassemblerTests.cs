@@ -415,20 +415,24 @@ public class TcpFlowReassemblerTests
 
         got.AddRange(r.Flush());
 
-        // Exactly one complete pair overall. The dropped request left the queues a different
-        // length; pairing FIFO across that would confidently pair req2 with res1 — a wrong body on
-        // the wrong request. It must stay one complete pair.
+        // Two complete pairs now — /0 and /2 — each carrying its OWN response body. The dropped
+        // request left one surplus response whose counterpart is gone; recovery releases the
+        // request stranded behind the hole, orphans that one surplus response, and the rest lines
+        // back up. The guarantee still holds where it matters: /2 pairs with ITS response (C),
+        // never a confident mispair onto the orphaned body (B).
         var complete = got.Where(e => !e.Partial).ToList();
-        var only = Assert.Single(complete);
-        Assert.Equal("/0", only.Url);
-        Assert.Equal("A", Body(only.Response));
+        Assert.Equal(2, complete.Count);
+        Assert.Equal("A", Body(complete.Single(e => e.Url == "/0").Response));
+        Assert.Equal("C", Body(complete.Single(e => e.Url == "/2").Response));
 
-        // The stranded request is still recovered and surfaced — as a request-only partial, not
-        // mispaired and not lost.
-        Assert.Contains(got, e => e.Partial && e.Url == "/2" && e.Response is null);
+        // The one orphaned response (B, the answer to the dropped request) surfaces as a
+        // response-only partial — surfaced, not mispaired, not lost.
+        var orphans = got.Where(e => e.Partial && e.Verb is null && e.Response is not null).ToList();
+        Assert.Single(orphans);
+        Assert.Equal("B", Body(orphans[0].Response));
 
-        // Both orphaned responses surface as response-only partials.
-        Assert.Equal(2, got.Count(e => e.Partial && e.Verb is null && e.Response is not null));
+        // And req2 is not flushed alone: it found its response rather than becoming a partial.
+        Assert.DoesNotContain(got, e => e.Partial && e.Response is null && e.Request is not null);
     }
 
     [Fact]

@@ -296,43 +296,26 @@ public sealed class TcpFlowReassembler
     }
 
     /// <summary>
-    /// Drains every permanent gap on one flow, leaving it open to carry on. For each hole it
-    /// surfaces the pairs framed before it, flushes whatever could not pair as a flagged partial
-    /// so both queues realign to empty, resynchronises both parsers, then skips the hole and feeds
-    /// what came after. It repeats until nothing is left buffered behind a hole, so a long
-    /// continuous capture with several drops on one connection recovers across all of them, not
-    /// just the first.
+    /// Recovers a flow stranded behind one or more capture gaps, leaving it open to carry on.
+    /// First it skips every hole and releases the bytes buffered behind it, resynchronising each
+    /// parser to the next message boundary — so both directions surface every message they still
+    /// hold. Then it reconciles the two queues (see <see cref="Reconcile"/>).
     ///
-    /// Flushing the unpaired remainder is what keeps this honest. An asymmetric loss — a request
-    /// dropped but its response captured, say — leaves the two queues a different length; pairing
-    /// FIFO across that would silently attach the wrong body to every later request. Realigning to
-    /// empty at each gap surfaces the odd ones out as flagged partials instead, which is far better
-    /// than a confident mispair, and lets the transactions after the gap pair up correctly again.
+    /// Skipping every hole before pairing is the point: a single dropped request packet strands
+    /// every later request on the flow behind it in the assembler, so pairing before the skip sees
+    /// only the responses and would flush them as orphans while their requests were still buffered.
+    /// Releasing first lets the transactions after the gap pair up again.
     /// </summary>
     private void DrainGaps(Flow flow, FlowKey key, List<Exchange> emitted)
     {
         var guard = 0;
-        while (true)
+        var skipped = false;
+
+        while (flow.ClientToServer is { PendingBytes: > 0 } || flow.ServerToClient is { PendingBytes: > 0 })
         {
-            // Emit anything complete, then drain the remainder as partials so both queues are
-            // empty and back in step before the next hole is skipped.
-            Pair(flow, key, emitted);
-
-            while (flow.Requests.Count > 0)
+            if (++guard > 4096)
             {
-                emitted.Add(BuildExchange(flow, key, flow.Requests.Dequeue(), null, partial: true));
-            }
-
-            while (flow.Responses.Count > 0)
-            {
-                emitted.Add(BuildExchange(flow, key, null, flow.Responses.Dequeue(), partial: true));
-            }
-
-            var stalled = flow.ClientToServer is { PendingBytes: > 0 }
-                          || flow.ServerToClient is { PendingBytes: > 0 };
-            if (!stalled || ++guard > 4096)
-            {
-                return;
+                break;
             }
 
             // Drop each half-parsed message; the released bytes begin mid-stream.
@@ -344,7 +327,39 @@ public sealed class TcpFlowReassembler
             // strictly forward, so the bytes buffered behind a hole shrink every pass — this ends.
             if (flow.ClientToServer is not null) { FeedRequest(flow, flow.ClientToServer.SkipGap()); }
             if (flow.ServerToClient is not null) { FeedResponse(flow, flow.ServerToClient.SkipGap()); }
+            skipped = true;
         }
+
+        if (skipped)
+        {
+            Reconcile(flow, key, emitted);
+        }
+    }
+
+    /// <summary>
+    /// Pairs the two queues after a gap has been skipped. HTTP/1.1 answers a connection's requests
+    /// in order, so once both directions are fully drained the only reason the queues differ in
+    /// length is that a message's counterpart was dropped — and, order being preserved, that
+    /// counterpart is the oldest unmatched entry on the longer side. Surface those as flagged
+    /// partials, then the remainder lines up again and pairs correctly. A single lost packet
+    /// therefore costs one exchange, not the rest of the connection, and never a mispair.
+    ///
+    /// Several interleaved drops within one recovery can still misalign; loss is surfaced as a
+    /// flagged partial rather than hidden, so that shows up honestly rather than as a wrong body.
+    /// </summary>
+    private void Reconcile(Flow flow, FlowKey key, List<Exchange> emitted)
+    {
+        while (flow.Requests.Count > flow.Responses.Count)
+        {
+            emitted.Add(BuildExchange(flow, key, flow.Requests.Dequeue(), null, partial: true));
+        }
+
+        while (flow.Responses.Count > flow.Requests.Count)
+        {
+            emitted.Add(BuildExchange(flow, key, null, flow.Responses.Dequeue(), partial: true));
+        }
+
+        Pair(flow, key, emitted);
     }
 
     /// <summary>
