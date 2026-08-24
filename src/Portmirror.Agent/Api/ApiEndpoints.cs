@@ -84,6 +84,7 @@ public static class ApiEndpoints
                 exchangesEmitted = capture.ExchangesEmitted,
                 signalsUncorrelated = capture.SignalsUncorrelated,
                 suppressedNoise = capture.SuppressedNoise,
+                orphanFragments = capture.OrphanFragmentsSuppressed,
                 retained = ring.Count,
                 capacity = ring.Capacity,
                 lastSeq = ring.LastSeq,

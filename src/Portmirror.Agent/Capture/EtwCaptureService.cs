@@ -68,6 +68,9 @@ public sealed class EtwCaptureService : IHostedService, IDisposable
     /// <summary>Content-less connection-noise exchanges dropped rather than stored. See <see cref="Emit"/>.</summary>
     public long SuppressedNoise => Interlocked.Read(ref _suppressed);
 
+    /// <summary>Response-only orphan fragments the correlator dropped (a response with no request).</summary>
+    public long OrphanFragmentsSuppressed { get { lock (_sync) { return _correlator.OrphanFragmentsSuppressed; } } }
+
     /// <summary>
     /// Event names seen so far mapped to the payload fields they actually carry. HTTP.SYS field
     /// names drift between Windows builds, so this is exposed over the API to make field
@@ -421,16 +424,17 @@ public sealed class EtwCaptureService : IHostedService, IDisposable
     private static string? CorrelationIdOf(TraceEvent data)
     {
         // RequestId is the stable HTTP.SYS request identity and is present on every
-        // request-scoped event except Parse. ActivityID is populated but is NOT stable across
-        // one request's events on Server 2022, so using it splits each request into fragments.
-        var requestId = TryString(data, "RequestId", "ContextId");
-
-        if (requestId is not null)
-        {
-            return requestId;
-        }
-
-        return data.ActivityID != Guid.Empty ? data.ActivityID.ToString("n") : null;
+        // request-scoped event except Parse.
+        //
+        // Do NOT fall back to ActivityID. On Server 2019/2022 ActivityID is populated but is
+        // NOT stable across one request's events, so it never stitches a request back together;
+        // it only hands the events that lack a RequestId — Parse, and the connection-scoped
+        // events — a key of their own, spinning each into a standalone fragment exchange that
+        // never sees a response and surfaces as a status-less "open" row. Parse fragments
+        // (verb + url, no status) were the overwhelming majority of the ring on a live box.
+        // Nothing is lost by dropping them: Parse's verb and url are already captured by
+        // FastResp (verb) and Deliver (url), both under a real RequestId.
+        return TryString(data, "RequestId", "ContextId");
     }
 
     /// <summary>

@@ -221,4 +221,54 @@ public class ExchangeCorrelatorTests
         Assert.Equal(CaptureDirection.Inbound, done!.Direction);
     }
 
+    [Fact]
+    public void A_response_with_no_request_side_and_no_url_is_dropped_as_an_orphan()
+    {
+        var correlator = new ExchangeCorrelator();
+
+        // A FastResp carrying a verb and a status but no url, under an id that never saw a
+        // RecvReq or Deliver, is a trailing response for a request captured under another id.
+        var done = correlator.Accept(new EtwSignal("orphan", SignalKind.ResponseSent, T0,
+            Verb: "POST", StatusCode: 200));
+
+        Assert.Null(done);
+        Assert.Equal(1L, correlator.OrphanFragmentsSuppressed);
+        Assert.Equal(0, correlator.PendingCount);
+
+        // Its own trailing events must not resurrect it into a fresh row either.
+        Assert.Null(correlator.Accept(new EtwSignal("orphan", SignalKind.ResponseSent, T0.AddMilliseconds(1),
+            StatusCode: 200)));
+        Assert.Equal(1L, correlator.OrphanFragmentsSuppressed);
+    }
+
+    [Fact]
+    public void A_request_the_host_answered_without_delivering_is_kept_even_with_no_url()
+    {
+        var correlator = new ExchangeCorrelator();
+
+        // HTTP.SYS received the request (RecvReq) then answered it itself — e.g. a 503 with no
+        // site delivery, so no url. It is a real request and must still be surfaced.
+        correlator.Accept(new EtwSignal("answered", SignalKind.RequestReceived, T0, ClientIp: "10.0.0.7"));
+        var done = correlator.Accept(new EtwSignal("answered", SignalKind.ResponseSent, T0.AddMilliseconds(2),
+            Verb: "GET", StatusCode: 503));
+
+        Assert.NotNull(done);
+        Assert.Null(done!.Url);
+        Assert.Equal(503, done.StatusCode!.Value);
+        Assert.Equal(0L, correlator.OrphanFragmentsSuppressed);
+    }
+
+    [Fact]
+    public void A_response_only_row_that_carries_a_url_is_kept()
+    {
+        var correlator = new ExchangeCorrelator();
+
+        // The orphan guard is scoped to url-less responses: anything with a url is worth showing.
+        var done = correlator.Accept(new EtwSignal("hasurl", SignalKind.ResponseSent, T0,
+            Verb: "GET", Url: "/seen", StatusCode: 200));
+
+        Assert.NotNull(done);
+        Assert.Equal("/seen", done!.Url);
+        Assert.Equal(0L, correlator.OrphanFragmentsSuppressed);
+    }
 }

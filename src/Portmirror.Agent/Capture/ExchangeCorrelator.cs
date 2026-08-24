@@ -11,6 +11,13 @@ public sealed class ExchangeCorrelator
     {
         public required Exchange Exchange { get; init; }
         public DateTimeOffset LastTouchedUtc { get; set; }
+
+        /// <summary>
+        /// True once any request-side event (RecvReq / Parse / Deliver) has landed for this id.
+        /// A response event arriving under an id that has no request-side context is an orphan:
+        /// the request was captured under a different id, or its request-side events were lost.
+        /// </summary>
+        public bool SawRequestSide { get; set; }
     }
 
     private readonly Dictionary<string, Pending> _pending = new(StringComparer.OrdinalIgnoreCase);
@@ -25,6 +32,7 @@ public sealed class ExchangeCorrelator
 
     private readonly TimeSpan _idleTimeout;
     private readonly int _maxPending;
+    private long _orphanFragments;
 
     public ExchangeCorrelator(TimeSpan? idleTimeout = null, int maxPending = 10_000)
     {
@@ -70,6 +78,11 @@ public sealed class ExchangeCorrelator
         var exchange = pending.Exchange;
         pending.LastTouchedUtc = signal.TimestampUtc;
 
+        if (signal.Kind is SignalKind.RequestReceived or SignalKind.RequestParsed or SignalKind.Delivered)
+        {
+            pending.SawRequestSide = true;
+        }
+
         // First non-null wins for identity fields; status is allowed to be overwritten
         // because a request can legitimately report more than one response event.
         exchange.Verb ??= signal.Verb;
@@ -103,6 +116,20 @@ public sealed class ExchangeCorrelator
 
         _pending.Remove(signal.CorrelationId);
         _recentlyCompleted[signal.CorrelationId] = signal.TimestampUtc;
+
+        // A response that completed an exchange which never saw a request-side event, and
+        // carries no url, is an orphaned trailing response: HTTP.SYS emitted it for a request
+        // already captured under another id, or this request's request-side events were lost.
+        // Drop it rather than surface a phantom row (a verb and a status with no url or client).
+        // Requests HTTP.SYS answered itself are still kept — a rejected request terminates via
+        // RequestEnded, not here, and one that reached a site saw Deliver, so SawRequestSide is
+        // set. Marking the id recently-completed still suppresses the response's trailing events.
+        if (outcomeKnown && !pending.SawRequestSide && exchange.Url is null)
+        {
+            _orphanFragments++;
+            return null;
+        }
+
         Complete(exchange, signal.TimestampUtc, partial: false);
         return exchange;
     }
@@ -185,6 +212,9 @@ public sealed class ExchangeCorrelator
 
     /// <summary>Finished ids currently being suppressed. Exposed for tests and diagnostics.</summary>
     public int RecentlyCompletedCount => _recentlyCompleted.Count;
+
+    /// <summary>Response-only orphan fragments dropped rather than surfaced. Tests and diagnostics.</summary>
+    public long OrphanFragmentsSuppressed => _orphanFragments;
 
     private static void Complete(Exchange exchange, DateTimeOffset completedUtc, bool partial)
     {
