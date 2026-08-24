@@ -392,11 +392,45 @@ public sealed class TcpFlowReassembler
             Partial = partial,
             ClientIp = flow.Client.Address?.ToString(),
             Verb = request?.Method,
-            Url = _redactor.RedactUrl(request?.Target),
+            Url = _redactor.RedactUrl(FullUrl(request)),
             StatusCode = response?.StatusCode,
             Request = request is null ? null : MessageMapper.ToHttpMessage(request, _redactor),
             Response = response is null ? null : MessageMapper.ToHttpMessage(response, _redactor)
         };
+    }
+
+    /// <summary>
+    /// The full request URL. An HTTP/1.1 request line carries only the path (origin-form), so the
+    /// target host lives in the Host header — reunite them (e.g. <c>/coordinator</c> +
+    /// <c>se-mws-0038:5202</c> → <c>http://se-mws-0038:5202/coordinator</c>) so an outbound row shows
+    /// which downstream it hit, not just the path. Packet capture is plaintext, so the scheme is
+    /// http. An absolute-form target (proxy-style) already has the host and is left as-is.
+    /// </summary>
+    internal static string? FullUrl(ParsedMessage? request)
+    {
+        var target = request?.Target;
+        if (string.IsNullOrEmpty(target))
+        {
+            return null;
+        }
+
+        if (target.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || target.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            return target;
+        }
+
+        string? host = null;
+        foreach (var h in request!.Headers)
+        {
+            if (string.Equals(h.Key, "Host", StringComparison.OrdinalIgnoreCase))
+            {
+                host = h.Value;
+                break;
+            }
+        }
+
+        return string.IsNullOrEmpty(host) ? target : "http://" + host + target;
     }
 
     private Flow CreateFlow(FlowKey key)
