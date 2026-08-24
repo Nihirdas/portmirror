@@ -9,5 +9,7 @@ artifacts/
 .vscode/
 *.etl
 *.pcapng
+# ...except sanitized capture fixtures the tests replay.
+!tests/Portmirror.Tests/fixtures/*.pcapng
 TestResults/
 .DS_Store
