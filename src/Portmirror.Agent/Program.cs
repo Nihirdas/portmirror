@@ -31,6 +31,10 @@ builder.Services.AddSingleton(new Redactor(options.RedactionEnabled));
 builder.Services.AddSingleton<EtwCaptureService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<EtwCaptureService>());
 
+// Stops capture when no viewer has polled for a while — the basis of on-demand capture.
+builder.Services.AddSingleton<IdleCaptureMonitor>();
+builder.Services.AddHostedService(sp => sp.GetRequiredService<IdleCaptureMonitor>());
+
 // The packet (body) feed is Windows-only and off unless enabled; register it only there.
 if (OperatingSystem.IsWindows())
 {
@@ -42,7 +46,9 @@ var app = builder.Build();
 app.UsePortmirrorAuth();
 app.MapPortmirror();
 
-if (OperatingSystem.IsWindows() && options.PacketCaptureEnabled)
+// Auto-start the packet feed only when capture auto-starts. On-demand deployments
+// (AutoStartCapture=false) leave it idle until a viewer starts capture via the API.
+if (OperatingSystem.IsWindows() && options.PacketCaptureEnabled && options.AutoStartCapture)
 {
     var feed = app.Services.GetRequiredService<Portmirror.Agent.Pcap.PcapFeedService>();
     var problem = feed.TryStart();

@@ -57,6 +57,7 @@ public static class ApiEndpoints
             ExchangeRing ring,
             EtwCaptureService capture,
             IServiceProvider services,
+            IdleCaptureMonitor idle,
             IOptions<AgentOptions> options) =>
         {
             var o = options.Value;
@@ -87,12 +88,15 @@ public static class ApiEndpoints
                 capacity = ring.Capacity,
                 lastSeq = ring.LastSeq,
                 redactionEnabled = o.RedactionEnabled,
-                authRequired = !string.IsNullOrEmpty(o.AuthToken)
+                authRequired = !string.IsNullOrEmpty(o.AuthToken),
+                idleStopSeconds = idle.IdleStopSeconds,
+                secondsSinceActivity = (int)idle.SecondsSinceActivity
             }, Json);
         });
 
         app.MapGet("/api/exchanges", (
             ExchangeRing ring,
+            IdleCaptureMonitor idle,
             long? since,
             int? limit,
             string? q,
@@ -100,6 +104,7 @@ public static class ApiEndpoints
             string? direction,
             bool? bodies) =>
         {
+            idle.Touch();   // a viewer is watching — keep capture alive
             var take = Math.Clamp(limit ?? 200, 1, 2000);
             var filter = BuildFilter(q, status, direction, bodies);
 
@@ -204,9 +209,20 @@ public static class ApiEndpoints
 
         // The point of the whole tool: capture toggles under a running application,
         // with no app pool recycle.
-        app.MapPost("/api/capture/start", (EtwCaptureService capture) =>
+        // Starts both tiers together — ETW metadata and, when enabled, the packet (body) feed — so
+        // a viewer gets everything with one call. Records activity so the idle monitor keeps it alive.
+        app.MapPost("/api/capture/start", (
+            EtwCaptureService capture,
+            IServiceProvider services,
+            IdleCaptureMonitor idle,
+            IOptions<AgentOptions> options) =>
         {
+            idle.Touch();
             var problem = capture.TryStartCapture();
+            if (options.Value.PacketCaptureEnabled)
+            {
+                services.GetService<Pcap.PcapFeedService>()?.TryStart();
+            }
 
             return problem is null
                 ? Results.Json(new { capturing = true }, Json)
@@ -214,9 +230,10 @@ public static class ApiEndpoints
                     statusCode: StatusCodes.Status503ServiceUnavailable);
         });
 
-        app.MapPost("/api/capture/stop", (EtwCaptureService capture) =>
+        app.MapPost("/api/capture/stop", (EtwCaptureService capture, IServiceProvider services) =>
         {
             capture.StopCapture();
+            services.GetService<Pcap.PcapFeedService>()?.Stop();
             return Results.Json(new { capturing = false }, Json);
         });
 
@@ -264,7 +281,7 @@ public static class ApiEndpoints
     }
 
     private static async Task StreamExchanges(
-        HttpContext ctx, ExchangeRing ring, long? since, string? q, int? status,
+        HttpContext ctx, ExchangeRing ring, IdleCaptureMonitor idle, long? since, string? q, int? status,
         string? direction, bool? bodies)
     {
         ctx.Response.ContentType = "text/event-stream";
@@ -279,6 +296,7 @@ public static class ApiEndpoints
         {
             while (!ct.IsCancellationRequested)
             {
+                idle.Touch();   // an open stream means a viewer is watching
                 var batch = ring.Since(cursor, 200, filter);
 
                 foreach (var exchange in batch)

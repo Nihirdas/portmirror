@@ -14,8 +14,17 @@ public sealed class AgentOptions
     /// </summary>
     public int Capacity { get; set; } = 20000;
 
-    /// <summary>Begin capturing as soon as the service starts.</summary>
+    /// <summary>Begin capturing as soon as the service starts. Set false for on-demand use, where
+    /// a viewer (e.g. the dashboard) starts capture via the API and it stops itself when idle.</summary>
     public bool AutoStartCapture { get; set; } = true;
+
+    /// <summary>
+    /// Stop capture automatically after this many seconds with no viewer activity (no listing or
+    /// stream request). A viewer's polling is the heartbeat, so capture runs only while someone is
+    /// watching and stops on its own when the browser is closed. 0 disables it (capture runs until
+    /// stopped explicitly) — the default, for the standalone agent; on-demand deployments set it.
+    /// </summary>
+    public int IdleStopSeconds { get; set; }
 
     /// <summary>Mask card numbers, credentials and tokens. Leave this on.</summary>
     public bool RedactionEnabled { get; set; } = true;
