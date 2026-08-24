@@ -8,7 +8,7 @@
     <Product>Portmirror</Product>
     <Authors>Nihir Kumar</Authors>
     <Company>Portmirror</Company>
-    <VersionPrefix>0.1.5</VersionPrefix>
+    <VersionPrefix>0.1.6</VersionPrefix>
     <RepositoryUrl>https://github.com/Nihirdas/portmirror</RepositoryUrl>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
   </PropertyGroup>
