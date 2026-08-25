@@ -52,6 +52,8 @@
   tr.pkt td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
   .bodymark { font-family: var(--mono); font-size: 10px; color: var(--ok); border: 1px solid var(--ok);
               border-radius: 4px; padding: 0 4px; margin-left: 6px; vertical-align: middle; }
+  .op { font-family: var(--mono); font-size: 10px; color: var(--accent); border: 1px solid var(--accent);
+        border-radius: 4px; padding: 0 4px; margin-left: 6px; vertical-align: middle; }
   aside { border-left: 1px solid var(--border); padding: 14px 16px; overflow: auto;
           max-height: calc(100vh - 108px); background: var(--panel); }
   aside h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
@@ -147,13 +149,14 @@
     tr.dataset.id = x.id;
     if (x.tier === 'PacketCapture' || x.tier === 'IisModule') tr.classList.add('pkt');
     const body = hasBody(x) ? ' <span class="bodymark" title="has a captured body">body</span>' : '';
+    const op = x.operation ? ` <span class="op" title="SOAPAction">${esc(x.operation)}</span>` : '';
     tr.innerHTML =
       `<td>${hhmmss(x.startedUtc)}</td>` +
       `<td>${dirCell(x.direction)}</td>` +
       `<td class="verb">${esc(x.verb || '-')}</td>` +
       `<td class="verb ${statusClass(x.statusCode)}">${x.statusCode ?? (x.partial ? '<span class="partial">open</span>' : '-')}</td>` +
       `<td>${x.durationMs != null ? x.durationMs.toFixed(1) : '-'}</td>` +
-      `<td class="url" title="${esc(x.url)}">${esc(x.url || '-')}${body}</td>` +
+      `<td class="url" title="${esc(x.url)}">${esc(x.url || '-')}${op}${body}</td>` +
       `<td>${esc(x.clientIp || '-')}</td>` +
       `<td>${esc(x.queueName || '-')}</td>`;
     tr.onclick = () => select(x.id);

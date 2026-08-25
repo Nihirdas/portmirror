@@ -345,9 +345,38 @@ public static class ApiEndpoints
         tier = e.Tier.ToString(),
         direction = e.Direction.ToString(),
         e.Partial,
+        operation = SoapAction(e.Request),
         request = MessageSummary(e.Request),
         response = MessageSummary(e.Response)
     };
+
+    /// <summary>
+    /// The SOAP operation for a request, from its SOAPAction header, so a list of SOAP calls that
+    /// all POST to the same endpoint can be told apart at a glance. The quotes SOAPAction is wrapped
+    /// in are stripped and a namespaced action is reduced to its final segment
+    /// (e.g. <c>"http://example/Service/Search"</c> → <c>Search</c>). Null for non-SOAP requests.
+    /// </summary>
+    internal static string? SoapAction(Capture.HttpMessage? request)
+    {
+        if (request is null || !request.Headers.TryGetValue("SOAPAction", out var raw))
+        {
+            return null;
+        }
+
+        var action = raw?.Trim().Trim('"').Trim();
+        if (string.IsNullOrEmpty(action))
+        {
+            return null;
+        }
+
+        var cut = action.LastIndexOfAny(new[] { '/', '#' });
+        if (cut >= 0 && cut < action.Length - 1)
+        {
+            action = action[(cut + 1)..];
+        }
+
+        return string.IsNullOrEmpty(action) ? null : action;
+    }
 
     private static object? MessageSummary(Capture.HttpMessage? m) => m is null ? null : new
     {
