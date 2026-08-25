@@ -251,6 +251,16 @@ public sealed class TcpFlowReassembler
 
         foreach (var message in flow.ResponseParser.Append(ordered))
         {
+            // A 1xx interim response (100 Continue, 103 Early Hints) is not the answer to a
+            // request — the real response follows it on the same connection. Queuing it would
+            // pair a request that used "Expect: 100-continue" (common for SOAP and uploads with a
+            // body) with the 100 and orphan its real response, so interim responses are dropped
+            // here rather than offered for pairing.
+            if (message.StatusCode is >= 100 and < 200)
+            {
+                continue;
+            }
+
             flow.Responses.Enqueue(message);
         }
     }

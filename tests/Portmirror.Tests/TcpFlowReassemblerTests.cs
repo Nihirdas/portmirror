@@ -50,6 +50,35 @@ public class TcpFlowReassemblerTests
     }
 
     [Fact]
+    public void Pairs_an_Expect_100_continue_request_with_its_final_response_not_the_100()
+    {
+        var r = New();
+        var got = new List<Exchange>();
+
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1000, "", syn: true)));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2000, "", syn: true, ack: true)));
+
+        // A request that announces Expect: 100-continue and carries a body.
+        got.AddRange(r.Accept(Seg(Client, 5000, Server, 80, 1001,
+            "POST /upload HTTP/1.1\r\nHost: h\r\nExpect: 100-continue\r\nContent-Length: 5\r\n\r\nhello")));
+
+        // The server answers with the interim 100 first, then the real response. Length of the
+        // "HTTP/1.1 100 Continue\r\n\r\n" frame is 25 bytes, so the final response starts at 2026.
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2001, "HTTP/1.1 100 Continue\r\n\r\n")));
+        got.AddRange(r.Accept(Seg(Server, 80, Client, 5000, 2026,
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")));
+
+        // Exactly one exchange: the request paired with the real 200, not the 100, and no orphan.
+        var ex = Assert.Single(got);
+        Assert.Equal("POST", ex.Verb);
+        Assert.Equal("http://h/upload", ex.Url);
+        Assert.Equal(200, ex.StatusCode);
+        Assert.Equal("hello", Body(ex.Request));
+        Assert.Equal("ok", Body(ex.Response));
+        Assert.False(ex.Partial);
+    }
+
+    [Fact]
     public void Reassembles_a_request_whose_segments_arrive_out_of_order()
     {
         var r = New();
