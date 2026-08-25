@@ -762,11 +762,13 @@
       </div>
       <div class="help-item">
         <span class="lvl deep">Deep end</span>
-        <h3>Fold the module's dependencies into one DLL</h3>
+        <h3>Capture outbound calls in-process, without a proxy</h3>
         <p>
-          The IIS module needs assembly binding redirects on .NET Framework because of its dependency
-          chain, which makes install fiddlier than it should be. Merging the dependencies into the module
-          assembly would turn install into a single copy.
+          Packet capture is the only tier that sees a server's own outbound calls with bodies, and it is
+          best-effort — it drops packets under load, so a large, infrequent call can be missed entirely.
+          Capturing outbound requests from inside the worker process — the way the module already captures
+          inbound — without becoming a proxy would make server-to-server bodies reliable. It is the hardest
+          open piece, and the most valuable.
         </p>
       </div>
       <div class="help-item">

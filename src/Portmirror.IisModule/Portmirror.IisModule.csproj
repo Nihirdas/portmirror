@@ -14,7 +14,38 @@
     <Reference Include="System.IO.Compression" />
     <Reference Include="System.Net.Http" />
     <PackageReference Include="System.Text.Json" Version="8.0.5" />
+    <!-- Build-time only: merges the dependency DLLs into the module (see IlRepackModule below). -->
+    <PackageReference Include="ILRepack.Lib.MSBuild.Task" Version="2.0.*" PrivateAssets="all" />
   </ItemGroup>
+
+  <!--
+    Merge System.Text.Json and its dependency chain INTO Portmirror.IisModule.dll so the module
+    ships as a single assembly. Loaded into an arbitrary IIS worker process, separate dependency
+    DLLs otherwise need exact binding redirects in the host web.config or the module silently
+    fails to load and captures nothing. Internalize keeps the merged types private, so they can
+    never clash with a host application that carries its own System.Text.Json.
+  -->
+  <Target Name="IlRepackModule" AfterTargets="Publish">
+    <ItemGroup>
+      <IlrDeps Include="$(PublishDir)*.dll" Exclude="$(PublishDir)Portmirror.IisModule.dll" />
+    </ItemGroup>
+    <ILRepack
+      Parallel="true"
+      Internalize="true"
+      TargetKind="Dll"
+      LibraryPath="$(PublishDir)"
+      InputAssemblies="$(PublishDir)Portmirror.IisModule.dll;@(IlrDeps)"
+      OutputFile="$(IntermediateOutputPath)ilrepack\Portmirror.IisModule.dll" />
+    <Copy SourceFiles="$(IntermediateOutputPath)ilrepack\Portmirror.IisModule.dll"
+          DestinationFiles="$(PublishDir)Portmirror.IisModule.dll" OverwriteReadOnlyFiles="true" />
+    <!-- The dependency DLLs (and their side files) are now embedded; remove the loose copies. -->
+    <Delete Files="@(IlrDeps)" />
+    <ItemGroup>
+      <IlrSideFiles Include="$(PublishDir)*.xml;$(PublishDir)*.pdb" Exclude="$(PublishDir)Portmirror.IisModule.xml;$(PublishDir)Portmirror.IisModule.pdb" />
+    </ItemGroup>
+    <Delete Files="@(IlrSideFiles)" />
+    <Message Importance="high" Text="ILRepack: merged @(IlrDeps->Count()) dependency assemblies into Portmirror.IisModule.dll" />
+  </Target>
 
   <!--
     Security-critical and format logic is compiled from the agent's source, not copied, so the
